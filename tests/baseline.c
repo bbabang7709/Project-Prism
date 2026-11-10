@@ -1,0 +1,213 @@
+/*
+ * 원본과 결과 비교 (make test)
+ *
+ * 모듈 분리 전 원본(tests/reference/prism_orig.c를 같은 플래그로 빌드한 것)과
+ * 지금 빌드(./prism)를 같은 인자로 실행해 결과를 비교한다.
+ *   - 글자 출력(--check 등): 같아야 한다. 실행 시간(ms)과 출력 폴더 이름은 비교에서 뺀다.
+ *   - --shot PPM 이미지: 바이트 단위로 같아야 한다. 다르면 다른 바이트 수와 최대 차이를 알려 준다.
+ *
+ * 사용: tests/out/baseline [원본 실행 파일] [새 실행 파일]   (프로젝트 루트에서)
+ *       기본값은 tests/out/prism_ref, ./prism
+ */
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#define OUT "tests/out"
+#define MAXARG 16
+
+/* 이름과 인자. 인자 안의 @는 결과 파일 경로(tests/out/<ref|new>/<이름>)로 바뀐다 */
+static const struct { const char *name, *args; } CASES[] = {
+    { "check",           "--check" },
+    { "check_solve",     "--check --solve" },
+    { "check_block",     "--check --solve --fp 5.5 5.5 0 0" },
+    { "shot_top",        "--shot @.ppm" },
+    { "shot_angle",      "--shot @.ppm 1.2 -0.6 15" },
+    { "shot_solve",      "--shot @.ppm --solve" },
+    { "shot_fp",         "--shot @.ppm --fp 2.5 8.5 1.5708 -0.35" },
+    { "shot_fp_solve",   "--shot @.ppm --fp 9.5 4.5 3.1416 -0.45 --solve" },
+    { "shot_fp_block",   "--shot @.ppm --fp 5.5 5.5 0 -0.3 --solve" },
+    { "shot_select",     "--shot @.ppm --select 2" },
+    { "shot_top_select", "--shot @.ppm 2.4 -1.0 12 --select 4 --solve" },
+};
+#define NCASES ((int)(sizeof CASES / sizeof CASES[0]))
+
+/* ---------- 파일 ---------- */
+
+/* 파일 전체를 읽는다. 없으면 NULL */
+static char *read_file(const char *path, size_t *len)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return NULL;
+    struct stat st;
+    if (fstat(fd, &st) < 0) { close(fd); return NULL; }
+    char *buf = malloc((size_t)st.st_size + 1);
+    if (!buf) { close(fd); return NULL; }
+    size_t got = 0;
+    while (got < (size_t)st.st_size) {
+        ssize_t n = read(fd, buf + got, (size_t)st.st_size - got);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        got += (size_t)n;
+    }
+    close(fd);
+    buf[got] = 0;
+    *len = got;
+    return buf;
+}
+
+static int exists(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+static void make_dir(const char *path)
+{
+    if (mkdir(path, 0755) < 0 && errno != EEXIST) { perror(path); exit(2); }
+}
+
+/* ---------- 실행 ---------- */
+
+/* bin을 인자 args로 실행하고 표준 출력과 오류를 out 파일에 담는다. 종료 코드를 돌려준다 */
+static int run(const char *bin, const char *args, const char *side, const char *name, const char *out)
+{
+    char buf[512], *argv[MAXARG + 2];
+    int argc = 0;
+    argv[argc++] = (char *)bin;
+    /* @를 결과 경로로 바꾸고 공백으로 나눈다 */
+    size_t k = 0;
+    for (const char *s = args; *s && k < sizeof buf - 64; s++) {
+        if (*s == '@') k += (size_t)snprintf(buf + k, sizeof buf - k, OUT "/%s/%s", side, name);
+        else buf[k++] = *s;
+    }
+    buf[k] = 0;
+    for (char *t = strtok(buf, " "); t && argc < MAXARG + 1; t = strtok(NULL, " ")) argv[argc++] = t;
+    argv[argc] = NULL;
+
+    pid_t pid = fork();
+    if (pid < 0) { perror("fork"); exit(2); }
+    if (pid == 0) {
+        int fd = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) { perror(out); _exit(127); }
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
+        execv(bin, argv);
+        perror(bin);
+        _exit(127);
+    }
+    int status;
+    while (waitpid(pid, &status, 0) < 0)
+        if (errno != EINTR) { perror("waitpid"); exit(2); }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+/* ---------- 비교 ---------- */
+
+/* 매번 달라지는 부분을 지운다: ", 1.2 ms with" → ", X ms with", "/ref/"·"/new/" → "/X/" */
+static void normalize(char *s)
+{
+    char *w = s;
+    for (const char *r = s; *r;) {
+        if (r[0] == ',' && r[1] == ' ') {
+            const char *p = r + 2;
+            while ((*p >= '0' && *p <= '9') || *p == '.') p++;
+            if (p > r + 2 && !strncmp(p, " ms with", 8)) {
+                memcpy(w, ", X", 3); w += 3;
+                r = p;
+                continue;
+            }
+        }
+        if (!strncmp(r, "/ref/", 5) || !strncmp(r, "/new/", 5)) {
+            memcpy(w, "/X/", 3); w += 3;
+            r += 5;
+            continue;
+        }
+        *w++ = *r++;
+    }
+    *w = 0;
+}
+
+static int same_text(const char *a_path, const char *b_path)
+{
+    size_t la, lb;
+    char *a = read_file(a_path, &la), *b = read_file(b_path, &lb);
+    int same = a && b;
+    if (same) {
+        normalize(a);
+        normalize(b);
+        same = strcmp(a, b) == 0;
+    }
+    free(a);
+    free(b);
+    return same;
+}
+
+/* 이미지를 바이트 단위로 비교한다. 다르면 다른 바이트 수와 최대 차이를 detail에 적는다 */
+static int same_image(const char *a_path, const char *b_path, char *detail, size_t dlen)
+{
+    size_t la, lb;
+    unsigned char *a = (unsigned char *)read_file(a_path, &la), *b = (unsigned char *)read_file(b_path, &lb);
+    int same = 0;
+    if (!a || !b) snprintf(detail, dlen, "이미지 없음");
+    else if (la != lb) snprintf(detail, dlen, "크기 다름 (%zu / %zu 바이트)", la, lb);
+    else {
+        size_t diff = 0;
+        int maxd = 0;
+        for (size_t i = 0; i < la; i++)
+            if (a[i] != b[i]) {
+                int d = abs((int)a[i] - (int)b[i]);
+                diff++;
+                if (d > maxd) maxd = d;
+            }
+        same = diff == 0;
+        if (!same) snprintf(detail, dlen, "%zu바이트 다름, 최대 차이 %d", diff, maxd);
+    }
+    free(a);
+    free(b);
+    return same;
+}
+
+int main(int argc, char **argv)
+{
+    const char *ref = argc > 1 ? argv[1] : OUT "/prism_ref";
+    const char *new = argc > 2 ? argv[2] : "./prism";
+    if (!exists(ref)) { fprintf(stderr, "원본 실행 파일이 없습니다: %s (make test로 실행하세요)\n", ref); return 2; }
+    if (!exists(new)) { fprintf(stderr, "먼저 make 하세요: %s 없음\n", new); return 2; }
+    make_dir(OUT);
+    make_dir(OUT "/ref");
+    make_dir(OUT "/new");
+
+    int fail = 0;
+    for (int i = 0; i < NCASES; i++) {
+        const char *name = CASES[i].name;
+        char txt[2][256], img[2][256], detail[128] = "";
+        const char *side[2] = { "ref", "new" }, *bin[2] = { ref, new };
+        int rc[2];
+        for (int s = 0; s < 2; s++) {
+            snprintf(txt[s], sizeof txt[s], OUT "/%s/%s.txt", side[s], name);
+            snprintf(img[s], sizeof img[s], OUT "/%s/%s.ppm", side[s], name);
+            unlink(img[s]);                               /* 지난번 이미지가 남아 비교되지 않게 */
+            rc[s] = run(bin[s], CASES[i].args, side[s], name, txt[s]);
+        }
+        int ok = rc[0] == rc[1];
+        if (!ok) snprintf(detail, sizeof detail, "종료 코드 다름 (%d / %d)", rc[0], rc[1]);
+        else if (!same_text(txt[0], txt[1])) { ok = 0; snprintf(detail, sizeof detail, "글자 출력 다름"); }
+        else if (exists(img[0]) || exists(img[1])) ok = same_image(img[0], img[1], detail, sizeof detail);
+        printf("  %s   %-16s %s\n", ok ? "같음" : "다름", name, detail);
+        fail += !ok;
+    }
+    if (fail) {
+        printf("실패: %d개 경우가 원본과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
+        return 1;
+    }
+    printf("통과: 모든 경우가 원본과 같습니다\n");
+    return 0;
+}

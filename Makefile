@@ -19,8 +19,17 @@ build/%.o: src/%.c
 -include $(OBJS:.o=.d)
 
 # 원본(tests/reference/prism_orig.c)과 결과를 비교한다
-test: prism
-	sh tests/baseline.sh
+test: prism tests/out/prism_ref tests/out/baseline
+	tests/out/baseline
+
+# 원본은 지금 빌드와 같은 컴파일러·플래그로 빌드해야 이미지까지 비교할 수 있다
+tests/out/prism_ref: tests/reference/prism_orig.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+
+tests/out/baseline: tests/baseline.c
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Wextra -O2 -o $@ $<
 
 clean:
 	rm -rf build prism tests/out

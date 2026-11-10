@@ -80,7 +80,9 @@ make clean
 make test
 ```
 
-모듈 분리 전 원본(`tests/reference/prism_orig.c`)을 같은 플래그로 빌드합니다. 그다음 `--check` 출력과 `--shot` 이미지 8장이 지금 빌드와 **바이트 단위로 같은지** 비교합니다.
+모듈 분리 전 원본(`tests/reference/prism_orig.c`)을 같은 플래그로 빌드한 뒤, C로 작성한 비교 프로그램(`tests/baseline.c`)을 실행합니다. 이 프로그램은 두 실행 파일을 같은 인자로 실행(`fork`, `execv`, `dup2`, `waitpid`)해서 `--check` 출력과 `--shot` 이미지 8장이 **바이트 단위로 같은지** 비교합니다. 이미지가 다르면 몇 바이트가 다른지와 최대 차이를 함께 보여 줍니다.
+
+종료 코드는 0이 통과, 1이 다른 경우 있음, 2가 실행 파일 없음입니다. 결과 파일은 `tests/out/ref`(원본)와 `tests/out/new`(지금 빌드)에 남습니다.
 
 ### 명령행 옵션
 
@@ -228,7 +230,7 @@ Project-Prism/
 │       ├── input.c/.h         # 키·마우스·win32 입력 해석 (콜백으로 알림)
 │       └── clock.h            # 단조 시계
 └── tests/
-    ├── baseline.sh            # 원본과 결과 비교 (make test)
+    ├── baseline.c             # 원본과 결과 비교 프로그램 (make test)
     └── reference/prism_orig.c # 모듈 분리 전 원본
 ```
 
