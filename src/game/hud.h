@@ -5,7 +5,7 @@
 #ifndef PRISM_GAME_HUD_H
 #define PRISM_GAME_HUD_H
 
-void hud_draw(int frame, int fps);
+void hud_draw(int frame, int fps, const char *net);   /* net: 네트워크 상태 글 (혼자면 NULL) */
 void hud_toggle_help(void);
 
 #endif

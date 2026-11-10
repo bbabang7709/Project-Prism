@@ -12,6 +12,7 @@
  *   name 빛의 신전        방 이름
  *   start 2 8 E          시작 칸 (x z)과 바라보는 방향 E S W N
  *   rot 6 2 2            (x, z) 칸 물체의 처음 각도 0~7 (거울은 22.5도, 광원은 45도 단위)
+ *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀)
  *   map                  다음 12줄이 16칸짜리 지도
  *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원  P 프리즘  M 거울  S 반투명 거울
  *             b 파랑 필터  r 빨강 필터  R G B Y 수정 (빨강, 초록, 파랑, 노랑)
@@ -41,6 +42,8 @@ typedef struct {
     signed char rot[RD][RW];  /* 물체의 처음 각도 */
     int sx, sz;               /* 시작 칸 */
     char face;                /* 처음 바라보는 방향: 'E' 'S' 'W' 'N' */
+    int coop;                 /* 2인용 방: 한 사람이 (stand_x, stand_z)에 서서 빛을 막아야 풀린다 */
+    int stand_x, stand_z;
 } Level;
 
 extern const char *KIND_NAME[];          /* O_* 번호로 찾는 물체 이름 */
@@ -55,6 +58,9 @@ extern int g_nobj, g_objat[RD][RW];
 /* dir 폴더의 *.lvl 파일을 이름 순서로 읽는다.
  * 읽은 방 수를 돌려준다. 폴더가 없으면 0, 파일이 잘못되었으면 -1과 err에 "파일:줄: 이유" */
 int world_load_levels(const char *dir, char *err, size_t errlen);
+
+/* 2인용 방(coop)을 목록에서 뺀다 (혼자 할 때) */
+void world_drop_coop(void);
 
 /* 방 파일 없이 기본 방 하나(원래 프로토타입의 방)를 쓴다 */
 void world_use_builtin(void);

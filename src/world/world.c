@@ -137,6 +137,9 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
             else if (sscanf(arg, "%d %d %d", &rots[nrots].x, &rots[nrots].z, &rots[nrots].r) != 3 || rots[nrots].r < 0 || rots[nrots].r > 7)
                 rc = fail(err, errlen, path, lineno, "rot는 \"rot x z 각도(0~7)\" 형식입니다");
             else rots[nrots++].line = lineno;
+        } else if (!strcmp(word, "coop")) {
+            if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "coop은 \"coop x z\" 형식입니다");
+            lv->coop = 1;
         } else if (!strcmp(word, "map")) rows = 0;
         else rc = fail(err, errlen, path, lineno, "알 수 없는 항목 '%s'", word);
     }
@@ -149,6 +152,8 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     if (lv->sx < 0) return fail(err, errlen, path, 0, "start 줄이 없습니다");
     if (lv->sx <= 0 || lv->sz <= 0 || lv->sx >= RW - 1 || lv->sz >= RD - 1 || lv->map[lv->sz][lv->sx] != '.')
         return fail(err, errlen, path, 0, "시작 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->sx, lv->sz);
+    if (lv->coop && (lv->stand_x <= 0 || lv->stand_z <= 0 || lv->stand_x >= RW - 1 || lv->stand_z >= RD - 1 || lv->map[lv->stand_z][lv->stand_x] != '.'))
+        return fail(err, errlen, path, 0, "coop 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->stand_x, lv->stand_z);
     for (int i = 0; i < nrots; i++) {
         int x = rots[i].x, z = rots[i].z;
         if (x < 0 || z < 0 || x >= RW || z >= RD || !strchr(OBJ_CHARS, lv->map[z][x]))
@@ -194,6 +199,14 @@ int world_load_levels(const char *dir, char *err, size_t errlen)
     g_nlevels = n;
     g_cur_level = 0;
     return n;
+}
+
+void world_drop_coop(void)
+{
+    int n = 0;
+    for (int i = 0; i < g_nlevels; i++)
+        if (!g_levels[i].coop) g_levels[n++] = g_levels[i];
+    if (n) g_nlevels = n;                               /* 2인용 방뿐이면 그대로 둔다 */
 }
 
 /* ---------- 방 만들기 ---------- */

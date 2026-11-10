@@ -12,19 +12,27 @@ uint32_t g_pix[MAX_H * 2][MAX_W];
 float g_depth[MAX_H * 2][MAX_W];
 uint16_t g_id[MAX_H * 2][MAX_W];
 
-/* 프레임마다 복사해 두는 빛줄기 선분과 플레이어 위치.
+/* 프레임마다 복사해 두는 빛줄기 선분과 플레이어 몸들.
  * 원본처럼 모듈 안 배열로 읽어야 -ffast-math에서 계산 결과가 픽셀 단위까지 같다. */
+#define MAXBODY 8
 static Seg s_seg[MAXSEG];
 static int s_nseg;
-static float s_plx, s_plz;
+static Body s_body[MAXBODY];
+static int s_nbody;
 
-void raycast_prepare(const Seg *seg, int nseg, float plx, float plz)
+void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody)
 {
     s_nseg = nseg < 0 ? 0 : nseg > MAXSEG ? MAXSEG : nseg;
     memcpy(s_seg, seg, sizeof *seg * (size_t)s_nseg);
-    s_plx = plx;
-    s_plz = plz;
+    s_nbody = nbody < 0 ? 0 : nbody > MAXBODY ? MAXBODY : nbody;
+    memcpy(s_body, body, sizeof *body * (size_t)s_nbody);
 }
+
+/* 플레이어별 색: 몸, 머리 (0번은 원래 색) */
+static const float BODY_COL[2][2][3] = {
+    { { 0.26f, 0.22f, 0.36f }, { 0.85f, 0.42f, 0.17f } },
+    { { 0.18f, 0.34f, 0.30f }, { 0.95f, 0.78f, 0.30f } },
+};
 
 /* ---------- 화면 광선 추적 ---------- */
 
@@ -76,6 +84,10 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
         if (e < d) { d = e; *mat = (fabsf(z) > 0.31f || fabsf(y - 0.52f) > 0.25f) ? M_FRAME : M_FILTER; }
         break;
     case O_EMIT:
+        if (o->rot) {                                     /* 동쪽이 아닌 광원: 쏘는 방향으로 돌린다 (45도 단위) */
+            float a = (float)o->rot * PI / 4, c = cosf(a), s = sinf(a), u = x * c + z * s, w = -x * s + z * c;
+            x = u; z = w;
+        }
         e = sd_box(x + 0.04f, y - 0.42f, z, 0.25f, 0.24f, 0.24f);
         if (e < d) { d = e; *mat = M_BODY; }
         e = sd_box(x - 0.29f, y - 0.55f, z, 0.07f, 0.07f, 0.07f);
@@ -119,10 +131,10 @@ static void surface_light(float px, float py, float pz, float nx, float ny, floa
     }
 }
 
-/* 플레이어 몸(원기둥 + 머리 구) 과 화면 광선의 교차 */
-static float player_hit(float ox, float oy, float oz, float dx, float dy, float dz, float *nx, float *ny, float *nz, int *head)
+/* 플레이어 몸 하나(원기둥 + 머리 구)와 화면 광선의 교차 (원본과 같은 계산) */
+static float player_hit(const Body *pb, float ox, float oy, float oz, float dx, float dy, float dz, float *nx, float *ny, float *nz, int *head)
 {
-    float best = 1e9f, fx = ox - s_plx, fz = oz - s_plz;
+    float best = 1e9f, fx = ox - pb->x, fz = oz - pb->z;
     float a = dx * dx + dz * dz, b = fx * dx + fz * dz, c = fx * fx + fz * fz - 0.2f * 0.2f, disc = b * b - a * c;
     if (a > 1e-8f && disc > 0) {
         float t = (-b - sqrtf(disc)) / a, y = oy + dy * t;
@@ -183,8 +195,15 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
     }
     Acc acc = { 0, 0, 0, 1 };
     float thit = 1e9f, pnx = 0, pny = 0, pnz = 0;
-    int phead = 0;
-    float tp = F->fp ? 1e9f : player_hit(ox, oy, oz, dx, dy, dz, &pnx, &pny, &pnz, &phead);
+    int phead = 0, pwho = 0;
+    float tp = s_nbody ? player_hit(&s_body[0], ox, oy, oz, dx, dy, dz, &pnx, &pny, &pnz, &phead) : 1e9f;
+    if (s_nbody) pwho = s_body[0].who;
+    for (int i = 1; i < s_nbody; i++) {                    /* 다른 몸: 더 가까우면 바꾼다 */
+        float nx2 = 0, ny2 = 0, nz2 = 0;
+        int head2 = 0;
+        float t2 = player_hit(&s_body[i], ox, oy, oz, dx, dy, dz, &nx2, &ny2, &nz2, &head2);
+        if (t2 < tp) { tp = t2; pnx = nx2; pny = ny2; pnz = nz2; phead = head2; pwho = s_body[i].who; }
+    }
     if (t1 > t0) {
         float sx0 = ox + dx * (t0 + 1e-4f), sy0 = oy + dy * (t0 + 1e-4f), sz0 = oz + dz * (t0 + 1e-4f);
         int x = (int)floorf(sx0), y = (int)floorf(sy0), z = (int)floorf(sz0);
@@ -201,14 +220,14 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
         int axis = -1;
         for (int it = 0; it < 120; it++) {
             float texit = fminf(tmx, fminf(tmy, tmz));
-            if (tp < texit) {                                                    /* 내려다보기에서 플레이어 몸 */
+            if (tp < texit) {                                                    /* 플레이어 몸 */
                 float hx = ox + dx * tp, hy = oy + dy * tp, hz = oz + dz * tp, lr, lg, lb;
                 surface_light(hx + pnx * 0.02f, hy + pny * 0.02f, hz + pnz * 0.02f, pnx, pny, pnz, &lr, &lg, &lb);
-                float ar = phead ? 0.85f : 0.26f, ag = phead ? 0.42f : 0.22f, ab = phead ? 0.17f : 0.36f;
-                layer(&acc, ar * lr * 255, ag * lg * 255, ab * lb * 255, 1);
+                const float *col = BODY_COL[pwho & 1][phead];
+                layer(&acc, col[0] * lr * 255, col[1] * lg * 255, col[2] * lb * 255, 1);
                 thit = tp;
                 *zdep = tp * (dx * F->fx + dy * F->fy + dz * F->fz);
-                *id = 99;
+                *id = (uint16_t)(99 - pwho);
                 break;
             }
             int b = g_blk[y][z][x];

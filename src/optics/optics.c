@@ -9,7 +9,8 @@
 Seg g_seg[MAXSEG];
 int g_nseg;
 
-static float g_bodyx, g_bodyz;          /* 이번 계산에서 빛을 가리는 몸의 중심 */
+static Body g_body[8];                 /* 이번 계산에서 빛을 가리는 몸들 */
+static int g_nbody;
 
 static int beam_blocked(int x, int z)
 {
@@ -45,12 +46,16 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         float t = axis ? tz : tx;
         float bx = x + dx * t, bz = z + dz * t;
         int nx = cx + (axis == 0 ? (dx > 0 ? 1 : -1) : 0), nz = cz + (axis == 1 ? (dz > 0 ? 1 : -1) : 0);
-        {                                                 /* 플레이어 몸(반지름 PR인 원)에 가려짐 */
-            float fx = x - g_bodyx, fz = z - g_bodyz, bb = fx * dx + fz * dz, cc = fx * fx + fz * fz - PR * PR, disc = bb * bb - cc;
-            if (cc > 0 && disc > 0) {
-                float th = -bb - sqrtf(disc);
-                if (th >= 0 && th <= t) { add_seg(sx, sz, x + dx * th, z + dz * th, r, g, b); return; }
+        {                                                 /* 플레이어 몸(반지름 PR인 원)에 가려짐: 가장 가까운 몸에서 끊긴다 */
+            float hit = -1;
+            for (int i = 0; i < g_nbody; i++) {
+                float fx = x - g_body[i].x, fz = z - g_body[i].z, bb = fx * dx + fz * dz, cc = fx * fx + fz * fz - PR * PR, disc = bb * bb - cc;
+                if (cc > 0 && disc > 0) {
+                    float th = -bb - sqrtf(disc);
+                    if (th >= 0 && th <= t && (hit < 0 || th < hit)) hit = th;
+                }
             }
+            if (hit >= 0) { add_seg(sx, sz, x + dx * hit, z + dz * hit, r, g, b); return; }
         }
         if (beam_blocked(nx, nz)) { add_seg(sx, sz, bx, bz, r, g, b); return; }
 
@@ -132,10 +137,10 @@ static int crystal_ok(const Obj *o)
     return 1;
 }
 
-int optics_simulate(float body_x, float body_z)
+int optics_simulate(const Body *bodies, int nbody)
 {
-    g_bodyx = body_x;
-    g_bodyz = body_z;
+    g_nbody = nbody < 0 ? 0 : nbody > 8 ? 8 : nbody;
+    for (int i = 0; i < g_nbody; i++) g_body[i] = bodies[i];
     g_nseg = 0;
     for (int i = 0; i < g_nobj; i++) memset(g_obj[i].got, 0, sizeof g_obj[i].got);
     for (int i = 0; i < g_nobj; i++)

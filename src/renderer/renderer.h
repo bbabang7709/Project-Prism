@@ -23,6 +23,8 @@ typedef struct {
     int sel_obj;                      /* 노란 테두리를 그릴 물체 번호 (-1이면 없음) */
     const Seg *seg;                   /* 빛줄기 선분 */
     int nseg;
+    const Body *bodies;               /* 그릴 플레이어 몸들 (1인칭이면 자기 몸은 빼고 넘긴다) */
+    int nbody;
 } View;
 
 /* 그린 결과. 위에서부터 H줄, 왼쪽부터 W칸을 쓴다 (0xRRGGBB) */

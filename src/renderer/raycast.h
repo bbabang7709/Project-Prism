@@ -5,7 +5,7 @@
  * id 버퍼 번호 규칙 (윤곽선과 선택 테두리가 쓴다)
  *   0                 배경
  *   b*8 + axis*2 + s + 1   블록 면 (b: B_*, axis: 0 x / 1 y / 2 z, s: 법선이 양수면 1) — 최대 38
- *   99                플레이어 몸
+ *   99 - 플레이어 번호  플레이어 몸 (99, 98)
  *   100 + g_objat     물체 (= 101 + 물체 번호)
  */
 #ifndef PRISM_RENDERER_RAYCAST_H
@@ -22,9 +22,9 @@ typedef struct {
     int W, H, frame, fp, tx, tz;
 } Frame;
 
-/* 이번 프레임의 빛줄기 선분과 플레이어 몸 위치를 복사해 둔다.
+/* 이번 프레임의 빛줄기 선분과 그릴 플레이어 몸들을 복사해 둔다.
  * 메인 스레드가 작업 스레드를 깨우기(바리어) 전에 부른다. */
-void raycast_prepare(const Seg *seg, int nseg, float plx, float plz);
+void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody);
 
 static inline uint32_t pack(float r, float g, float b)
 {

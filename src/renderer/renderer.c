@@ -102,7 +102,7 @@ static void setup_frame(const View *v, int W, int H, int frame)
     F->frame = frame;
     F->fp = v->fp;
     F->tx = v->tx; F->tz = v->tz;
-    raycast_prepare(v->seg, v->nseg, v->px, v->pz);
+    raycast_prepare(v->seg, v->nseg, v->bodies, v->nbody);
 }
 
 void renderer_draw(const View *v, int W, int H, int frame)
