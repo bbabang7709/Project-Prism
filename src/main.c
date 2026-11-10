@@ -38,17 +38,50 @@ static void on_press(int vk)
 
 static void on_quit(void) { g_quit = 1; }
 
+/* ---------- 방 파일 ---------- */
+
+/* 방 파일을 읽는다. dir을 주면 그 폴더만, 아니면 ./levels → 실행 파일 옆 levels → 기본 방 순서로 찾는다.
+ * 잘못된 방 파일이 있으면 이유를 출력하고 0을 돌려준다 */
+static int load_levels(const char *dir)
+{
+    char err[512];
+    int n;
+    if (dir) {
+        n = world_load_levels(dir, err, sizeof err);
+        if (n == 0) snprintf(err, sizeof err, "%s: 방 파일(.lvl)이 없습니다", dir);
+    } else {
+        n = world_load_levels("levels", err, sizeof err);
+        if (n == 0) {                                     /* 다른 폴더에서 실행했을 때: 실행 파일 옆 */
+            char exe[512];
+            ssize_t len = readlink("/proc/self/exe", exe, sizeof exe - 16);
+            if (len > 0) {
+                exe[len] = 0;
+                char *slash = strrchr(exe, '/');
+                if (slash) {
+                    strcpy(slash, "/levels");
+                    n = world_load_levels(exe, err, sizeof err);
+                }
+            }
+        }
+        if (n == 0) { world_use_builtin(); n = 1; }
+    }
+    if (n <= 0) { fprintf(stderr, "prism: %s\n", err); return 0; }
+    return 1;
+}
+
 /* ---------- 진입점 ---------- */
 
 int main(int argc, char **argv)
 {
-    int check = 0, do_solve = 0, sel = -1, fp_shot = 0;
+    int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1;
     float fx = 0, fz = 0, fyaw = 0, fpitch = 0;
-    const char *shot = NULL;
+    const char *shot = NULL, *level_dir = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--check")) check = 1;
         else if (!strcmp(argv[i], "--solve")) do_solve = 1;
         else if (!strcmp(argv[i], "--select") && i + 1 < argc) sel = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--level") && i + 1 < argc) level = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--levels") && i + 1 < argc) level_dir = argv[++i];
         else if (!strcmp(argv[i], "--fp") && i + 4 < argc) {
             fp_shot = 1;
             fx = strtof(argv[++i], NULL); fz = strtof(argv[++i], NULL);
@@ -58,11 +91,16 @@ int main(int argc, char **argv)
             if (i + 2 < argc && argv[i + 1][0] != '-') { cam_yaw = cam_yaw_target = strtof(argv[++i], NULL); cam_pitch = strtof(argv[++i], NULL); }
             if (i + 1 < argc && argv[i + 1][0] != '-') cam_dist = strtof(argv[++i], NULL);
         } else {
-            fprintf(stderr, "usage: %s [--check] [--solve] [--shot file.ppm [yaw pitch [dist]]] [--fp x z yaw pitch] [--select n]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--levels dir] [--level n] [--check] [--solve] [--shot file.ppm [yaw pitch [dist]]] [--fp x z yaw pitch] [--select n]\n", argv[0]);
             return 1;
         }
     }
-    game_init();
+    if (!load_levels(level_dir)) return 1;
+    if (level < 1 || level > g_nlevels) {
+        fprintf(stderr, "prism: 방 번호는 1~%d입니다 (%d)\n", g_nlevels, level);
+        return 1;
+    }
+    game_init(level - 1);
     int nthreads = renderer_init();
 
     if (check || shot) {

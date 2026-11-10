@@ -19,7 +19,8 @@ float cam_yaw = 0.62f, cam_yaw_target = 0.62f, cam_pitch = -0.78f, cam_dist = 19
 int g_solved;
 char g_msg[160];
 int g_msg_t;
-static int g_moves;                     /* 들기·놓기·돌리기 횟수 */
+static int g_moves;                     /* 지금 방에서 들기·놓기·돌리기 횟수 */
+static int g_cleared;                   /* 마지막 방의 문까지 지났다 */
 
 /* ---------- 빛 계산과 문 ---------- */
 
@@ -31,9 +32,21 @@ void game_simulate(void)
     world_set_door(g_solved);
 }
 
-void game_init(void)
+/* 지금 방의 시작 칸 가운데에, 정해진 방향을 보고 선다 */
+static void place_player(void)
 {
+    const Level *lv = &g_levels[g_cur_level];
+    g_px = (float)lv->sx + 0.5f;
+    g_pz = (float)lv->sz + 0.5f;
+    g_pyaw = lv->face == 'E' ? PI / 2 : lv->face == 'W' ? -PI / 2 : lv->face == 'N' ? PI : 0;
+    g_ppitch = -0.35f;
+}
+
+void game_init(int level)
+{
+    g_cur_level = level;
     load_level();
+    place_player();
     game_simulate();
 }
 
@@ -166,15 +179,34 @@ void game_rotate(int d)
     after_change();
 }
 
-static void reset_room(void)
+/* 지금 방을 처음 상태로 만들고 시작 칸에 선다 */
+static void restart_room(void)
 {
     load_level();
     g_carry = -1;
-    g_px = 2.5f; g_pz = 8.5f; g_pyaw = PI / 2; g_ppitch = -0.35f;
+    place_player();
     game_simulate();
     g_moves = 0;
     game_find_target();
+}
+
+static void reset_room(void)
+{
+    restart_room();
     game_message("처음 상태로 되돌렸어요");
+}
+
+/* 열린 문을 지났다: 다음 방으로, 마지막 방이면 끝 */
+static void through_door(void)
+{
+    if (g_cur_level + 1 < g_nlevels) {
+        g_cur_level++;
+        restart_room();
+        game_message("방 %d/%d: %s", g_cur_level + 1, g_nlevels, g_levels[g_cur_level].name);
+    } else if (!g_cleared) {
+        g_cleared = 1;
+        game_message("모든 방을 풀었어요! 빛의 신전을 빠져나왔습니다");
+    }
 }
 
 void game_press(int vk)
@@ -219,6 +251,7 @@ static void player_tick(float dt)
             int was = g_solved;
             game_simulate();                              /* 몸이 빛줄기를 가릴 수 있다 */
             if (g_solved && !was) game_message("모든 수정이 빛났어요! 문이 열렸습니다");
+            if (g_solved && world_is_door((int)floorf(g_px), (int)floorf(g_pz))) through_door();
         }
     }
     game_find_target();

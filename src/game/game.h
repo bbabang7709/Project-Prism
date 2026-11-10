@@ -23,7 +23,7 @@ extern int g_solved;                    /* 모든 수정이 켜졌는가 (문 �
 extern char g_msg[160];
 extern int g_msg_t;                     /* 알림이 남은 틱 수 */
 
-void game_init(void);                   /* 방을 만들고 빛을 계산한다 */
+void game_init(int level);              /* level번 방(0부터)을 만들고 시작 칸에 서서 빛을 계산한다 */
 void game_simulate(void);               /* 빛 계산 → 문 갱신 */
 int game_solve(void);                   /* 거울 각도를 모두 시험해 푸는 방법을 찾는다 */
 void game_find_target(void);            /* 겨누는 물체와 놓을 칸을 다시 구한다 */

@@ -5,6 +5,8 @@
  * 지금 빌드(./prism)를 같은 인자로 실행해 결과를 비교한다.
  *   - 글자 출력(--check 등): 같아야 한다. 실행 시간(ms)과 출력 폴더 이름은 비교에서 뺀다.
  *   - --shot PPM 이미지: 바이트 단위로 같아야 한다. 다르면 다른 바이트 수와 최대 차이를 알려 준다.
+ * 그다음 새 빌드로 방 파일을 하나씩(--level 1, 2, ...) 확인한다.
+ *   - 처음에는 문이 닫혀 있어야 하고(풀리지 않은 상태), --solve로 풀 수 있어야 한다.
  *
  * 사용: tests/out/baseline [원본 실행 파일] [새 실행 파일]   (프로젝트 루트에서)
  *       기본값은 tests/out/prism_ref, ./prism
@@ -204,10 +206,29 @@ int main(int argc, char **argv)
         printf("  %s   %-16s %s\n", ok ? "같음" : "다름", name, detail);
         fail += !ok;
     }
-    if (fail) {
-        printf("실패: %d개 경우가 원본과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
-        return 1;
+    if (fail) printf("실패: %d개 경우가 원본과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
+    else printf("통과: 모든 경우가 원본과 같습니다\n");
+
+    /* 방 파일: 모든 방이 풀리지 않은 상태로 시작하고, 거울 각도를 돌려서 풀 수 있어야 한다 */
+    int bad = 0, nlv = 0;
+    for (int n = 1; n <= 64; n++) {
+        char args[32], name[32], txt[256];
+        snprintf(args, sizeof args, "--check --solve --level %d", n);
+        snprintf(name, sizeof name, "level_%d", n);
+        snprintf(txt, sizeof txt, OUT "/new/%s.txt", name);
+        int rc = run(new, args, "new", name, txt);
+        size_t len;
+        char *out = read_file(txt, &len);
+        if (rc != 0 && out && strstr(out, "방 번호는")) { free(out); break; }   /* 방이 더 없다 */
+        nlv++;
+        const char *why = rc != 0 ? "실행 실패" : !out ? "출력 없음"
+                        : !strstr(out, "door closed\n") ? "처음부터 문이 열려 있음"
+                        : !strstr(out, "\nsolved:") ? "풀 수 없음" : NULL;
+        printf("  %s   방 %d %s\n", why ? "실패" : "풀림", n, why ? why : "");
+        bad += why != NULL;
+        free(out);
     }
-    printf("통과: 모든 경우가 원본과 같습니다\n");
-    return 0;
+    if (bad) printf("실패: %d/%d개 방에 문제가 있습니다 (" OUT "/new/level_*.txt)\n", bad, nlv);
+    else printf("통과: 방 %d개 모두 풀 수 있습니다\n", nlv);
+    return fail || bad ? 1 : 0;
 }

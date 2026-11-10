@@ -45,7 +45,8 @@ void hud_draw(int frame, int fps)
     int total, lit = optics_count_lit(&total);
     term_bar(0, 0x161822);
     int x = term_text(1, 0, 0xFFD27A, 0x161822, " PRISM ") + 2;
-    x += term_text(x, 0, 0xC8CCD8, 0x161822, "빛의 신전  |  수정 %d/%d", lit, total);
+    if (g_nlevels > 1) x += term_text(x, 0, 0xC8CCD8, 0x161822, "방 %d/%d ", g_cur_level + 1, g_nlevels);
+    x += term_text(x, 0, 0xC8CCD8, 0x161822, "%s  |  수정 %d/%d", g_levels[g_cur_level].name, lit, total);
     x += term_text(x, 0, g_solved ? 0x7CE07C : 0xC8CCD8, 0x161822, g_solved ? "  |  문 열림" : "  |  문 닫힘");
     x += term_text(x, 0, 0xC8CCD8, 0x161822, "  |  %s", g_fp ? "1인칭" : "내려다보기");
     term_text(g_cols - 34, 0, 0x7A8090, 0x161822, "키 %s  빛줄기 %d  %2d fps", input_win32() ? "누름/뗌" : "탭", g_nseg, fps);
