@@ -49,10 +49,21 @@ make test                                 # 원본(tests/reference/prism_orig.c)
 
 세 수정이 모두 켜지면 오른쪽 벽의 문이 열립니다. 정답 각도는 `./prism --check --solve`로 확인할 수 있습니다.
 
-## 소스 구조 (모듈 분리 진행 중)
+## 소스 구조
+
+```
+main ──> game, hud ──> optics ──> world ──> common
+           │   │          ▲
+           │   └──────> renderer ──> world (읽기), common (Seg)
+           └──────────> platform/input
+platform/terminal <── hud
+```
 
 | 경로 | 내용 |
 |---|---|
+| `src/main.c` | 명령행 옵션, 시험·스크린샷 모드, 30fps 루프, 입력 사건을 게임에 연결 |
+| `src/game/game.*` | 플레이어·카메라 상태, 겨누기, 들기·놓기·돌리기, 처음 상태로, 빛 계산 후 문 갱신(`game_simulate`), 풀이 찾기 |
+| `src/game/hud.*` | 렌더러 픽셀을 반블록 칸으로 옮기고 상태 줄·안내·도움말·알림을 얹어 출력 |
 | `src/common/config.h` | 방·버퍼 크기, 스레드 수, 플레이어 몸 크기 상수 |
 | `src/common/mathutil.h` | `clampf` |
 | `src/common/types.h` | `Seg`: 빛 시뮬레이션이 만들고 렌더러가 그리는 빛줄기 선분 |
@@ -61,13 +72,14 @@ make test                                 # 원본(tests/reference/prism_orig.c)
 | `src/renderer/renderer.*` | 게임이 채운 `View`(시점, 카메라, 겨눈 칸·물체, 빛줄기 선분)로 한 프레임을 그림. 작업 스레드와 바리어, 윤곽선 후처리, PPM 저장 |
 | `src/renderer/raycast.*` | 렌더러 내부: 화면 광선 추적(`trace`), 물체 SDF, 표면 조명, 프레임 버퍼 |
 | `src/platform/terminal.*` | raw 모드, 화면 칸 버퍼, 바뀐 칸만 출력, HUD 글자, 창 크기와 시그널 |
-| `src/main.c` | 아직 나누지 않은 부분: 입력, 게임(카메라 상태, 문 갱신 포함), HUD, 진입점 |
+| `src/platform/input.*` | 입력 바이트 해석(win32 입력 모드, 키 반복 흉내, 마우스). 콜백으로 알리고 게임 함수를 직접 부르지 않음 |
+| `src/platform/clock.h` | 단조 시계 |
 
 `tests/reference/prism_orig.c`는 분리 전 원본이며, `make test`가 이것과 결과를 비교합니다.
 
 ## 구현
 
-- **빛 시뮬레이션** (`beam`, `simulate`)
+- **빛 시뮬레이션** (`beam`, `optics_simulate`)
   - 빛줄기를 칸 단위로 따라가다 물체를 만나면 칸 가운데에 가장 가까운 점에서 반응합니다.
   - 반사 `r = d - 2(d·n)n`, 유리 경계에서 굴절과 전반사를 처리합니다.
   - 갈라지는 곳(반투명 거울, 프리즘)에서만 재귀합니다. 깊이 28, 선분 512개로 제한합니다.
