@@ -10,6 +10,7 @@ make
 ./prism --check --solve                   # 처음 상태와 풀이를 글자로 출력 (시험용)
 ./prism --shot a.ppm [yaw pitch [거리]] [--solve]   # 내려다보기 화면을 PPM 이미지로 저장
 ./prism --shot a.ppm --fp x z yaw pitch [--solve]   # 그 위치에서 본 1인칭 화면 저장
+make test                                 # 원본(tests/reference/prism_orig.c)과 출력·이미지가 같은지 비교
 ```
 
 - 창은 80×24칸 이상이면 되고, 클수록 선명합니다. Windows Terminal에서 최대화를 권장합니다.
@@ -47,6 +48,19 @@ make
 - **수정**: 빨강, 파랑, 노랑 3개. 노랑은 빨강과 초록이 함께 닿아야 켜집니다.
 
 세 수정이 모두 켜지면 오른쪽 벽의 문이 열립니다. 정답 각도는 `./prism --check --solve`로 확인할 수 있습니다.
+
+## 소스 구조 (모듈 분리 진행 중)
+
+| 경로 | 내용 |
+|---|---|
+| `src/common/config.h` | 방·버퍼 크기, 스레드 수, 플레이어 몸 크기 상수 |
+| `src/common/mathutil.h` | `clampf` |
+| `src/common/types.h` | `Seg`: 빛 시뮬레이션이 만들고 렌더러가 그리는 빛줄기 선분 |
+| `src/world/` | 블록(`g_blk`), 물체(`g_obj`, `g_objat`), 문자 지도, `load_level`, `world_set_door` |
+| `src/platform/terminal.*` | raw 모드, 화면 칸 버퍼, 바뀐 칸만 출력, HUD 글자, 창 크기와 시그널 |
+| `src/main.c` | 아직 나누지 않은 부분: 빛 시뮬레이션, 렌더러, 입력, 게임, HUD, 진입점 |
+
+`tests/reference/prism_orig.c`는 분리 전 원본이며, `make test`가 이것과 결과를 비교합니다.
 
 ## 구현
 
