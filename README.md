@@ -58,8 +58,10 @@ make test                                 # 원본(tests/reference/prism_orig.c)
 | `src/common/types.h` | `Seg`: 빛 시뮬레이션이 만들고 렌더러가 그리는 빛줄기 선분 |
 | `src/world/` | 블록(`g_blk`), 물체(`g_obj`, `g_objat`), 문자 지도, `load_level`, `world_set_door` |
 | `src/optics/` | 빛 시뮬레이션: `optics_simulate(몸 x, z)`가 선분(`g_seg`)과 수정 상태를 만들고 퍼즐이 풀렸는지 돌려줌. 블록은 바꾸지 않음 |
+| `src/renderer/renderer.*` | 게임이 채운 `View`(시점, 카메라, 겨눈 칸·물체, 빛줄기 선분)로 한 프레임을 그림. 작업 스레드와 바리어, 윤곽선 후처리, PPM 저장 |
+| `src/renderer/raycast.*` | 렌더러 내부: 화면 광선 추적(`trace`), 물체 SDF, 표면 조명, 프레임 버퍼 |
 | `src/platform/terminal.*` | raw 모드, 화면 칸 버퍼, 바뀐 칸만 출력, HUD 글자, 창 크기와 시그널 |
-| `src/main.c` | 아직 나누지 않은 부분: 렌더러, 입력, 게임(문 갱신 포함), HUD, 진입점 |
+| `src/main.c` | 아직 나누지 않은 부분: 입력, 게임(카메라 상태, 문 갱신 포함), HUD, 진입점 |
 
 `tests/reference/prism_orig.c`는 분리 전 원본이며, `make test`가 이것과 결과를 비교합니다.
 
