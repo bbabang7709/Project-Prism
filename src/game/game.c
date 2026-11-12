@@ -24,10 +24,44 @@ int g_cleared;
 
 /* ---------- 빛 계산과 문 ---------- */
 
-/* 빛을 다시 계산하고(모든 플레이어의 몸이 빛을 가림), 결과에 따라 문을 연다.
- * 문 블록은 빛을 막으므로 순서는 반드시 "빛 계산 → 문 갱신"이다. */
+/* 플레이어 몸(원)이 (x, z) 칸과 겹치는가 */
+static int body_on_cell(const Player *p, int x, int z)
+{
+    float qx = clampf(p->x, (float)x, (float)x + 1), qz = clampf(p->z, (float)z, (float)z + 1);
+    return (qx - p->x) * (qx - p->x) + (qz - p->z) * (qz - p->z) < PR * PR;
+}
+
+/* 발판과 창살: 발판은 그 칸에 서 있는 사람이나 놓인 물체가 누른다.
+ * 발판이 모두 눌려 있는 동안 창살이 열린다. 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
+static void update_plates(void)
+{
+    const Level *lv = &g_levels[g_cur_level];
+    int plates = 0, all = 1;
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++) {
+            if (lv->map[z][x] != '_') continue;
+            int pressed = g_objat[z][x] != 0;
+            for (int i = 0; i < MAXPLAYER && !pressed; i++)
+                pressed = g_pl[i].on && (int)floorf(g_pl[i].x) == x && (int)floorf(g_pl[i].z) == z;
+            world_set_plate(x, z, pressed);
+            plates++;
+            all &= pressed;
+        }
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++) {
+            if (lv->map[z][x] != '=') continue;
+            int open = plates > 0 && all;
+            for (int i = 0; i < MAXPLAYER && !open; i++)
+                open = g_pl[i].on && body_on_cell(&g_pl[i], x, z);
+            world_set_gate(x, z, open);
+        }
+}
+
+/* 발판·창살을 갱신하고, 빛을 다시 계산한 뒤(모든 플레이어의 몸이 빛을 가림), 결과에 따라 문을 연다.
+ * 창살과 문 블록은 빛을 막으므로 순서는 반드시 "발판·창살 → 빛 계산 → 문 갱신"이다. */
 void game_simulate(void)
 {
+    update_plates();
     Body b[MAXPLAYER];
     int n = 0;
     for (int i = 0; i < MAXPLAYER; i++)
@@ -113,14 +147,8 @@ static void after_change(void)
 
 static int cell_free(int x, int z)
 {
-    return x > 0 && z > 0 && x < RW - 1 && z < RD - 1 && g_blk[1][z][x] == B_AIR && !g_objat[z][x];
-}
-
-/* 플레이어 몸(원)이 (x, z) 칸과 겹치는가 */
-static int body_on_cell(const Player *p, int x, int z)
-{
-    float qx = clampf(p->x, (float)x, (float)x + 1), qz = clampf(p->z, (float)z, (float)z + 1);
-    return (qx - p->x) * (qx - p->x) + (qz - p->z) * (qz - p->z) < PR * PR;
+    return x > 0 && z > 0 && x < RW - 1 && z < RD - 1 && g_blk[1][z][x] == B_AIR && !g_objat[z][x] &&
+           g_levels[g_cur_level].map[z][x] != '=';       /* 열린 창살 칸에는 물체를 놓을 수 없다 */
 }
 
 /* self의 몸(원)을 (x, z)에 두면 벽, 유리, 물체 칸, 다른 플레이어와 겹치는가 */
@@ -168,7 +196,7 @@ void game_find_target(int p)
             if (y == 1 && g_objat[z][x]) { pl->tobj = g_objat[z][x] - 1; return; }
             int b = g_blk[y][z][x];
             if (b != B_AIR) {
-                if (b == B_FLOOR && y == 0 && axis == 1 && cell_free(x, z)) { pl->tx = x; pl->tz = z; }
+                if ((b == B_FLOOR || b == B_PLATE || b == B_PLATE_ON) && y == 0 && axis == 1 && cell_free(x, z)) { pl->tx = x; pl->tz = z; }
                 break;
             }
         }

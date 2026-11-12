@@ -80,8 +80,9 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
         break;
     }
     case O_FILTER:
-        e = sd_box(x, y - 0.52f, z, 0.03f, 0.3f, 0.36f);
-        if (e < d) { d = e; *mat = (fabsf(z) > 0.31f || fabsf(y - 0.52f) > 0.25f) ? M_FRAME : M_FILTER; }
+        /* 색유리 상자: 어느 방향의 빛이든 지나가며 걸러진다 (광학과 같은 모양). 네 모서리 기둥과 위아래 띠는 틀 */
+        e = sd_box(x, y - 0.52f, z, 0.26f, 0.3f, 0.26f);
+        if (e < d) { d = e; *mat = ((fabsf(x) > 0.21f && fabsf(z) > 0.21f) || fabsf(y - 0.52f) > 0.25f) ? M_FRAME : M_FILTER; }
         break;
     case O_EMIT:
         if (o->rot) {                                     /* 동쪽이 아닌 광원: 쏘는 방향으로 돌린다 (45도 단위) */
@@ -128,6 +129,21 @@ static void surface_light(float px, float py, float pz, float nx, float ny, floa
         float f = k / (1 + d2 / 0.5f);
         f *= f;
         *lr += o->col[0] * f; *lg += o->col[1] * f; *lb += o->col[2] * f;
+    }
+}
+
+/* 바닥의 빛 자국: 빛줄기는 바닥보다 BY - 1만큼 떠 있어서 비스듬히 보면 지나는 칸과 어긋나 보인다.
+ * 빛줄기 바로 아래 바닥에 가는 줄을 더해 실제로 지나는 칸을 알 수 있게 한다 */
+static void floor_trace(float px, float pz, float *lr, float *lg, float *lb)
+{
+    for (int i = 0; i < s_nseg; i++) {
+        const Seg *s = &s_seg[i];
+        float ex = s->x1 - s->x0, ez = s->z1 - s->z0, l2 = ex * ex + ez * ez;
+        float t = l2 > 0 ? clampf(((px - s->x0) * ex + (pz - s->z0) * ez) / l2, 0, 1) : 0;
+        float dx = px - (s->x0 + ex * t), dz = pz - (s->z0 + ez * t), d2 = dx * dx + dz * dz;
+        if (d2 > 0.04f) continue;
+        float f = 0.55f * expf(-d2 / (0.05f * 0.05f));
+        *lr += s->r * f; *lg += s->g * f; *lb += s->b * f;
     }
 }
 
@@ -232,7 +248,7 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
             }
             int b = g_blk[y][z][x];
             if (b == B_WALL && y >= 2 && !F->fp && near_wall(F, x, z)) b = B_AIR;          /* 카메라 쪽 벽은 잘라서 안이 보이게 */
-            if (b == B_FLOOR || b == B_WALL || b == B_DOOR) {
+            if (b == B_FLOOR || b == B_WALL || b == B_DOOR || b >= B_PLATE) {
                 float hx = ox + dx * tcell, hy = oy + dy * tcell, hz = oz + dz * tcell;
                 if (axis < 0) {                                                  /* 상자 경계에서 바로 맞음: 가장 가까운 면 */
                     float fx = hx - floorf(hx), fy = hy - floorf(hy), fz = hz - floorf(hz);
@@ -251,6 +267,16 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                 } else if (b == B_DOOR) {
                     ar = 0.42f; ag = 0.30f; ab = 0.18f;
                     if (fabsf(u - 0.5f) < 0.04f || fabsf(v - 0.5f) < 0.04f) { ar = 0.9f; ag = 0.75f; ab = 0.35f; }
+                } else if (b == B_PLATE || b == B_PLATE_ON) {                    /* 발판: 구리색 판, 눌리면 초록 */
+                    int rim = u < 0.12f || u > 0.88f || v < 0.12f || v > 0.88f;
+                    if (b == B_PLATE_ON) { ar = 0.30f; ag = 0.95f; ab = 0.45f; }
+                    else { ar = 0.80f; ag = 0.52f; ab = 0.24f; }
+                    if (rim || axis != 1) { ar = 0.22f; ag = 0.22f; ab = 0.27f; }
+                    if (x == F->tx && z == F->tz && axis == 1 && (u < 0.09f || u > 0.91f || v < 0.09f || v > 0.91f)) hl = 1;
+                } else if (b == B_GATE) {                                        /* 창살: 세로 막대 */
+                    ar = 0.34f; ag = 0.50f; ab = 0.66f;
+                    if (ny == 0 && fmodf(u * 4 + 0.25f, 1) < 0.5f) { ar = 0.12f; ag = 0.17f; ab = 0.24f; }
+                    if (ny == 0 && fabsf(v - 0.5f) < 0.05f) { ar = 0.55f; ag = 0.72f; ab = 0.90f; }
                 } else {
                     float k = ny > 0 ? 1.15f : 1.0f;
                     ar = 0.33f * k; ag = 0.33f * k; ab = 0.40f * k;
@@ -260,6 +286,7 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                 }
                 float lr, lg, lb;
                 surface_light(hx + nx * 0.01f, hy + ny * 0.01f, hz + nz * 0.01f, nx, ny, nz, &lr, &lg, &lb);
+                if (axis == 1 && ny > 0 && y == 0) floor_trace(hx, hz, &lr, &lg, &lb);   /* 빛줄기 바로 아래 바닥 */
                 if (hl) layer(&acc, 255, 205, 80, 1);                            /* 물체를 놓을 칸 */
                 else layer(&acc, ar * lr * 255, ag * lg * 255, ab * lb * 255, 1);
                 thit = tcell;

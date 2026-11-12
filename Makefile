@@ -18,14 +18,19 @@ build/%.o: src/%.c
 
 -include $(OBJS:.o=.d)
 
-# 원본(tests/reference/prism_orig.c)과 결과를 비교한다
-test: prism tests/out/prism_ref tests/out/baseline
-	tests/out/baseline
+# 기준 커밋(REF, 기본은 마지막 커밋)의 빌드와 결과를 비교하고, 모든 방이 풀리는지 확인한다.
+#   make test               커밋하지 않은 변경이 결과를 바꾸는지
+#   make test REF=f95e08b   원본 프로토타입(첫 커밋)과 비교
+REF ?= HEAD
 
-# 원본은 지금 빌드와 같은 컴파일러·플래그로 빌드해야 이미지까지 비교할 수 있다
-tests/out/prism_ref: tests/reference/prism_orig.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+test: prism ref tests/out/baseline
+	tests/out/baseline tests/out/refsrc/prism
+
+# 기준 커밋의 소스를 꺼내 같은 컴파일러·플래그로 빌드한다 (이미지까지 비교하려면 플래그가 같아야 한다)
+ref:
+	@rm -rf tests/out/refsrc && mkdir -p tests/out/refsrc
+	git -c safe.directory='*' archive $(REF) | tar -x -C tests/out/refsrc
+	$(MAKE) -s -C tests/out/refsrc prism
 
 tests/out/baseline: tests/baseline.c
 	@mkdir -p $(dir $@)
@@ -34,4 +39,4 @@ tests/out/baseline: tests/baseline.c
 clean:
 	rm -rf build prism tests/out
 
-.PHONY: all test clean
+.PHONY: all test ref clean

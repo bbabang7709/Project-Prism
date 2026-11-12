@@ -1,19 +1,21 @@
 /*
- * 원본과 결과 비교 (make test)
+ * 기준 커밋과 결과 비교, 방 풀이 확인 (make test)
  *
- * 모듈 분리 전 원본(tests/reference/prism_orig.c를 같은 플래그로 빌드한 것)과
+ * 기준 커밋(make test REF=..., 기본은 마지막 커밋)을 같은 플래그로 빌드한 것과
  * 지금 빌드(./prism)를 같은 인자로 실행해 결과를 비교한다.
  *   - 글자 출력(--check 등): 같아야 한다. 실행 시간(ms)과 출력 폴더 이름은 비교에서 뺀다.
  *   - --shot PPM 이미지: 바이트 단위로 같아야 한다. 다르면 다른 바이트 수와 최대 차이를 알려 준다.
  * 그다음 새 빌드로 방 파일을 하나씩(--level 1, 2, ...) 확인한다.
  *   - 처음에는 문이 닫혀 있어야 하고(풀리지 않은 상태), --solve로 풀 수 있어야 한다.
  *
- * 사용: tests/out/baseline [원본 실행 파일] [새 실행 파일]   (프로젝트 루트에서)
+ * 사용: tests/out/baseline [기준 실행 파일] [새 실행 파일]   (프로젝트 루트에서)
  *       기본값은 tests/out/prism_ref, ./prism
+ *       기준 실행 파일은 그 파일이 있는 폴더에서 실행한다 (그 커밋의 levels 폴더를 쓰도록)
  */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,8 @@
 
 #define OUT "tests/out"
 #define MAXARG 16
+
+static char g_root[PATH_MAX];            /* 프로젝트 루트 (결과 파일을 절대 경로로 넘긴다) */
 
 /* 이름과 인자. 인자 안의 @는 결과 파일 경로(tests/out/<ref|new>/<이름>)로 바뀐다 */
 static const struct { const char *name, *args; } CASES[] = {
@@ -77,8 +81,8 @@ static void make_dir(const char *path)
 
 /* ---------- 실행 ---------- */
 
-/* bin을 인자 args로 실행하고 표준 출력과 오류를 out 파일에 담는다. 종료 코드를 돌려준다 */
-static int run(const char *bin, const char *args, const char *side, const char *name, const char *out)
+/* bin을 인자 args로 (dir이 있으면 그 폴더에서) 실행하고 표준 출력과 오류를 out 파일에 담는다. 종료 코드를 돌려준다 */
+static int run(const char *bin, const char *dir, const char *args, const char *side, const char *name, const char *out)
 {
     char buf[512], *argv[MAXARG + 2];
     int argc = 0;
@@ -86,7 +90,7 @@ static int run(const char *bin, const char *args, const char *side, const char *
     /* @를 결과 경로로 바꾸고 공백으로 나눈다 */
     size_t k = 0;
     for (const char *s = args; *s && k < sizeof buf - 64; s++) {
-        if (*s == '@') k += (size_t)snprintf(buf + k, sizeof buf - k, OUT "/%s/%s", side, name);
+        if (*s == '@') k += (size_t)snprintf(buf + k, sizeof buf - k, "%s/" OUT "/%s/%s", g_root, side, name);
         else buf[k++] = *s;
     }
     buf[k] = 0;
@@ -101,6 +105,7 @@ static int run(const char *bin, const char *args, const char *side, const char *
         dup2(fd, STDOUT_FILENO);
         dup2(fd, STDERR_FILENO);
         close(fd);
+        if (dir && chdir(dir) < 0) { perror(dir); _exit(127); }
         execv(bin, argv);
         perror(bin);
         _exit(127);
@@ -113,7 +118,7 @@ static int run(const char *bin, const char *args, const char *side, const char *
 
 /* ---------- 비교 ---------- */
 
-/* 매번 달라지는 부분을 지운다: ", 1.2 ms with" → ", X ms with", "/ref/"·"/new/" → "/X/" */
+/* 매번 달라지는 부분을 지운다: ", 1.2 ms with" → ", X ms with", "/ref/"·"/new/" → "/X/" (경로 앞부분은 같다) */
 static void normalize(char *s)
 {
     char *w = s;
@@ -181,8 +186,14 @@ int main(int argc, char **argv)
 {
     const char *ref = argc > 1 ? argv[1] : OUT "/prism_ref";
     const char *new = argc > 2 ? argv[2] : "./prism";
-    if (!exists(ref)) { fprintf(stderr, "원본 실행 파일이 없습니다: %s (make test로 실행하세요)\n", ref); return 2; }
+    if (!exists(ref)) { fprintf(stderr, "기준 실행 파일이 없습니다: %s (make test로 실행하세요)\n", ref); return 2; }
     if (!exists(new)) { fprintf(stderr, "먼저 make 하세요: %s 없음\n", new); return 2; }
+    if (!getcwd(g_root, sizeof g_root)) { perror("getcwd"); return 2; }
+    char ref_abs[PATH_MAX], ref_dir[PATH_MAX];            /* 기준 실행 파일은 자기 폴더에서 실행한다 */
+    if (!realpath(ref, ref_abs)) { perror(ref); return 2; }
+    snprintf(ref_dir, sizeof ref_dir, "%s", ref_abs);
+    *strrchr(ref_dir, '/') = 0;
+    ref = ref_abs;
     make_dir(OUT);
     make_dir(OUT "/ref");
     make_dir(OUT "/new");
@@ -197,7 +208,7 @@ int main(int argc, char **argv)
             snprintf(txt[s], sizeof txt[s], OUT "/%s/%s.txt", side[s], name);
             snprintf(img[s], sizeof img[s], OUT "/%s/%s.ppm", side[s], name);
             unlink(img[s]);                               /* 지난번 이미지가 남아 비교되지 않게 */
-            rc[s] = run(bin[s], CASES[i].args, side[s], name, txt[s]);
+            rc[s] = run(bin[s], s == 0 ? ref_dir : NULL, CASES[i].args, side[s], name, txt[s]);
         }
         int ok = rc[0] == rc[1];
         if (!ok) snprintf(detail, sizeof detail, "종료 코드 다름 (%d / %d)", rc[0], rc[1]);
@@ -206,8 +217,8 @@ int main(int argc, char **argv)
         printf("  %s   %-16s %s\n", ok ? "같음" : "다름", name, detail);
         fail += !ok;
     }
-    if (fail) printf("실패: %d개 경우가 원본과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
-    else printf("통과: 모든 경우가 원본과 같습니다\n");
+    if (fail) printf("실패: %d개 경우가 기준 커밋과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
+    else printf("통과: 모든 경우가 기준 커밋과 같습니다\n");
 
     /* 방 파일: 모든 방이 풀리지 않은 상태로 시작하고, 거울 각도를 돌려서 풀 수 있어야 한다 */
     int bad = 0, nlv = 0;
@@ -216,7 +227,7 @@ int main(int argc, char **argv)
         snprintf(args, sizeof args, "--check --solve --level %d", n);
         snprintf(name, sizeof name, "level_%d", n);
         snprintf(txt, sizeof txt, OUT "/new/%s.txt", name);
-        int rc = run(new, args, "new", name, txt);
+        int rc = run(new, NULL, args, "new", name, txt);
         size_t len;
         char *out = read_file(txt, &len);
         if (rc != 0 && out && strstr(out, "방 번호는")) { free(out); break; }   /* 방이 더 없다 */

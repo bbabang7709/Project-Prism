@@ -142,7 +142,7 @@ int main(int argc, char **argv)
         if (check) game_print_state("start");
         if (do_solve) {
             const Level *lv = &g_levels[g_cur_level];
-            if (lv->coop) {                               /* 2인용 방: 두 번째 사람이 정해진 칸에서 빛을 막는다 */
+            if (lv->has_stand) {                          /* 누군가 정해진 칸에 서 있어야 풀리는 방 (2인용 방, 발판 방) */
                 g_pl[1].on = 1;
                 g_pl[1].x = (float)lv->stand_x + 0.5f;
                 g_pl[1].z = (float)lv->stand_z + 0.5f;

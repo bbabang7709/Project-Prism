@@ -13,9 +13,11 @@
  *   start 2 8 E          시작 칸 (x z)과 바라보는 방향 E S W N
  *   rot 6 2 2            (x, z) 칸 물체의 처음 각도 0~7 (거울은 22.5도, 광원은 45도 단위)
  *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀)
+ *   stand 4 8            풀이 확인(--solve)에서 누군가 이 칸에 서 있다고 본다 (발판 방)
  *   map                  다음 12줄이 16칸짜리 지도
- *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원  P 프리즘  M 거울  S 반투명 거울
+ *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원   P 프리즘  M 거울  S 반투명 거울
  *             b 파랑 필터  r 빨강 필터  R G B Y 수정 (빨강, 초록, 파랑, 노랑)
+ *             _ 발판  = 창살 (발판이 모두 눌려 있는 동안 열린다. 발판은 사람이나 물체가 누른다)
  */
 #ifndef PRISM_WORLD_H
 #define PRISM_WORLD_H
@@ -26,7 +28,7 @@
 
 #define MAXLEVEL 16
 
-enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR };
+enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE };   /* 발판(안 눌림/눌림), 창살 */
 enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL };
 
 typedef struct {
@@ -42,7 +44,8 @@ typedef struct {
     signed char rot[RD][RW];  /* 물체의 처음 각도 */
     int sx, sz;               /* 시작 칸 */
     char face;                /* 처음 바라보는 방향: 'E' 'S' 'W' 'N' */
-    int coop;                 /* 2인용 방: 한 사람이 (stand_x, stand_z)에 서서 빛을 막아야 풀린다 */
+    int coop;                 /* 2인용 방 (혼자 할 때는 건너뛴다) */
+    int has_stand;            /* 풀이 확인용: 누군가 (stand_x, stand_z)에 서 있어야 풀린다 */
     int stand_x, stand_z;
 } Level;
 
@@ -70,6 +73,10 @@ void load_level(void);
 
 /* 지금 방 지도의 문(D) 칸을 열거나(공기) 닫는다(문 블록) */
 void world_set_door(int open);
+
+/* 발판 칸의 눌림 표시, 창살 칸 열고 닫기 (언제 누르고 여는지는 게임이 정한다) */
+void world_set_plate(int x, int z, int pressed);
+void world_set_gate(int x, int z, int open);
 
 /* (x, z)가 지금 방의 문 칸인가 */
 int world_is_door(int x, int z);

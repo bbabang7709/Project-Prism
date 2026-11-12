@@ -53,7 +53,7 @@ void world_use_builtin(void)
 
 /* ---------- 방 파일 읽기 ---------- */
 
-static const char MAP_CHARS[] = ".#|DgEPMSbrRGBY";
+static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBY";
 static const char OBJ_CHARS[] = "EPMSbrRGBY";
 
 static int fail(char *err, size_t errlen, const char *file, int line, const char *fmt, ...)
@@ -137,9 +137,12 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
             else if (sscanf(arg, "%d %d %d", &rots[nrots].x, &rots[nrots].z, &rots[nrots].r) != 3 || rots[nrots].r < 0 || rots[nrots].r > 7)
                 rc = fail(err, errlen, path, lineno, "rot는 \"rot x z 각도(0~7)\" 형식입니다");
             else rots[nrots++].line = lineno;
+        } else if (!strcmp(word, "stand")) {
+            if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "stand는 \"stand x z\" 형식입니다");
+            lv->has_stand = 1;
         } else if (!strcmp(word, "coop")) {
             if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "coop은 \"coop x z\" 형식입니다");
-            lv->coop = 1;
+            lv->coop = lv->has_stand = 1;
         } else if (!strcmp(word, "map")) rows = 0;
         else rc = fail(err, errlen, path, lineno, "알 수 없는 항목 '%s'", word);
     }
@@ -152,8 +155,8 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     if (lv->sx < 0) return fail(err, errlen, path, 0, "start 줄이 없습니다");
     if (lv->sx <= 0 || lv->sz <= 0 || lv->sx >= RW - 1 || lv->sz >= RD - 1 || lv->map[lv->sz][lv->sx] != '.')
         return fail(err, errlen, path, 0, "시작 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->sx, lv->sz);
-    if (lv->coop && (lv->stand_x <= 0 || lv->stand_z <= 0 || lv->stand_x >= RW - 1 || lv->stand_z >= RD - 1 || lv->map[lv->stand_z][lv->stand_x] != '.'))
-        return fail(err, errlen, path, 0, "coop 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->stand_x, lv->stand_z);
+    if (lv->has_stand && (lv->stand_x <= 0 || lv->stand_z <= 0 || lv->stand_x >= RW - 1 || lv->stand_z >= RD - 1 || !strchr("._", lv->map[lv->stand_z][lv->stand_x])))
+        return fail(err, errlen, path, 0, "coop/stand 칸 (%d, %d)이 바닥이나 발판이 아닙니다", lv->stand_x, lv->stand_z);
     for (int i = 0; i < nrots; i++) {
         int x = rots[i].x, z = rots[i].z;
         if (x < 0 || z < 0 || x >= RW || z >= RD || !strchr(OBJ_CHARS, lv->map[z][x]))
@@ -236,6 +239,8 @@ void load_level(void)
             case '|': g_blk[1][z][x] = g_blk[2][z][x] = B_WALL; break;
             case 'D': g_blk[1][z][x] = g_blk[2][z][x] = B_DOOR; g_blk[3][z][x] = B_WALL; break;
             case 'g': g_blk[1][z][x] = B_GLASS; break;
+            case '_': g_blk[0][z][x] = B_PLATE; break;
+            case '=': g_blk[1][z][x] = g_blk[2][z][x] = B_GATE; break;
             case 'E': add_obj(O_EMIT, x, z, rot, 0, 1, 1, 1); break;
             case 'P': add_obj(O_PRISM, x, z, rot, 1, 0, 0, 0); break;
             case 'M': add_obj(O_MIRROR, x, z, rot, 1, 0, 0, 0); break;
@@ -261,4 +266,14 @@ void world_set_door(int open)
 int world_is_door(int x, int z)
 {
     return x >= 0 && z >= 0 && x < RW && z < RD && g_levels[g_cur_level].map[z][x] == 'D';
+}
+
+void world_set_plate(int x, int z, int pressed)
+{
+    g_blk[0][z][x] = pressed ? B_PLATE_ON : B_PLATE;
+}
+
+void world_set_gate(int x, int z, int open)
+{
+    g_blk[1][z][x] = g_blk[2][z][x] = open ? B_AIR : B_GATE;
 }
