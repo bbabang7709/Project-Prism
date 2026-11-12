@@ -21,6 +21,20 @@ float cam_yaw = 0.62f, cam_yaw_target = 0.62f, cam_pitch = -0.78f, cam_dist = 19
 int g_solved;
 int g_moves;
 int g_cleared;
+int g_ticks;
+int g_total_moves;
+
+void game_reset(void)
+{
+    for (int i = 0; i < MAXPLAYER; i++)
+        g_pl[i] = (Player){ .on = i == 0, .yaw = PI / 2, .pitch = -0.35f, .fp = 1, .walk_yaw = 0.62f,
+                            .carry = -1, .tobj = -1, .tx = -1, .tz = -1 };
+    g_me = 0;
+    cam_yaw = cam_yaw_target = 0.62f;
+    cam_pitch = -0.78f;
+    cam_dist = 19;
+    g_solved = g_moves = g_cleared = g_ticks = g_total_moves = 0;
+}
 
 /* ---------- 빛 계산과 문 ---------- */
 
@@ -142,6 +156,7 @@ static void after_change(void)
     int was = g_solved;
     game_simulate();
     g_moves++;
+    g_total_moves++;
     if (g_solved && !was) game_message(-1, "모든 수정이 빛났어요! 문이 열렸습니다 (%d번 조작)", g_moves);
 }
 
@@ -381,6 +396,7 @@ void game_tick(float dt)
     cam_yaw += (cam_yaw_target - cam_yaw) * 0.25f;        /* 카메라는 부드럽게 돈다 */
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].msg_t > 0) g_pl[i].msg_t--;
+    if (!g_cleared) g_ticks++;
 }
 
 void game_local_tick(void)

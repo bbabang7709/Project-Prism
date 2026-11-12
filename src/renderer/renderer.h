@@ -39,4 +39,7 @@ void renderer_draw(const View *v, int W, int H, int frame);
 /* g_pix의 W×H 영역을 scale배 키워 PPM(P6)으로 저장한다 */
 void renderer_write_ppm(const char *path, int W, int H, int scale);
 
+/* 같은 영역을 PNG로 저장한다 (압축하지 않는 deflate 블록, 외부 라이브러리 없음). 실패하면 -1 */
+int renderer_write_png(const char *path, int W, int H, int scale);
+
 #endif

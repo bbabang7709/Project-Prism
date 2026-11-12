@@ -67,9 +67,22 @@ void hud_draw(int frame, int fps, const char *net)
     if (g_help) {
         term_bar(g_rows - 1, 0x161822);
         term_text(1, g_rows - 1, 0x9AA0B0, 0x161822,
-             me->fp ? "WASD 걷기   방향키 시선   F 들기/놓기   Q/E·휠 거울 돌리기   Tab 내려다보기   R 처음부터   H 도움말   ESC 종료"
-                  : "WASD 걷기   ←→ 카메라 회전   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   R 처음부터   ESC 종료");
+             me->fp ? "WASD 걷기   방향키 시선   F 들기/놓기   Q/E·휠 거울 돌리기   Tab 내려다보기   R 처음부터   H 도움말   ESC 메뉴"
+                  : "WASD 걷기   ←→ 카메라 회전   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   R 처음부터   ESC 메뉴");
     }
     if (me->msg_t > 0) term_text(g_cols / 2 - term_str_w(me->msg) / 2 - 1, 2, g_solved ? 0x101010 : 0xFFFFFF, g_solved ? 0x7CE07C : 0x2A2F3C, " %s ", me->msg);
+    if (g_cleared) {                                      /* 끝 화면: 기록과 안내 */
+        int bw = 46, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - 4;
+        for (int y = by; y < by + 7; y++)
+            for (int x = bx; x < bx + bw; x++) g_back[y][x] = (VCell){ 0xFFFFFF, 0x1C2A22, " ", 0 };
+        char line[96];
+        int sec = g_ticks / 30;
+        const char *l1 = "모든 방을 풀었어요!";
+        term_text(g_cols / 2 - term_str_w(l1) / 2, by + 1, 0x7CE07C, 0x1C2A22, "%s", l1);
+        snprintf(line, sizeof line, "걸린 시간 %d:%02d   ·   조작 %d번   ·   방 %d개", sec / 60, sec % 60, g_total_moves, g_nlevels);
+        term_text(g_cols / 2 - term_str_w(line) / 2, by + 3, 0xE8ECF4, 0x1C2A22, "%s", line);
+        const char *l3 = "Enter 또는 ESC: 메뉴로";
+        term_text(g_cols / 2 - term_str_w(l3) / 2, by + 5, 0x9AA0B0, 0x1C2A22, "%s", l3);
+    }
     term_present();
 }

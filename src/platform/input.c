@@ -20,7 +20,10 @@ int input_win32(void) { return g_win32; }
 
 int input_esc_expired(void)
 {
-    return g_in_len == 1 && g_in[0] == 27 && g_esc_since && g_now - g_esc_since > 60;
+    if (!(g_in_len == 1 && g_in[0] == 27 && g_esc_since && g_now - g_esc_since > 60)) return 0;
+    g_in_len = 0;                                        /* ESC 한 바이트를 썼다 */
+    g_esc_since = 0;
+    return 1;
 }
 
 static void key_event(int vk, int down)
@@ -42,9 +45,14 @@ static void key_tap(int vk)
     g_ktap[vk] = g_now + (was ? 90 : 200);
 }
 
+static void text(int c) { if (g_h.text && c >= 32 && c < 127) g_h.text(c); }
+
 static void plain_char(int c)
 {
+    text(c);                                            /* 글자 입력란이 쓰는 글자 */
     if (c == 3) g_h.quit();
+    else if (c == '\r' || c == '\n') key_tap(VK_ENTER);
+    else if (c == 127 || c == 8) key_tap(VK_BACK);
     else if (c >= 'a' && c <= 'z') key_tap(c - 32);
     else if (c >= 'A' && c <= 'Z') key_tap(c);
     else if (c == '\t') key_tap(VK_TAB);
@@ -67,6 +75,7 @@ static void csi(const unsigned char *p, int n, char fin)
     if (fin == '_') {                                    /* win32-input-mode: Vk;Sc;Uc;Kd;Cs;Rc */
         g_win32 = 1;
         if (prm[0] == 'C' && prm[3] && (prm[4] & 0x0C)) g_h.quit();
+        if (prm[3] && prm[2] >= 32 && prm[2] < 127) text(prm[2]);   /* 키 반복도 글자로 */
         if (prm[0] > 0) key_event(prm[0], prm[3]);
     } else if (priv && fin == 'M') {                     /* 마우스: 왼쪽 클릭 = 들기/놓기, 휠 = 돌리기 */
         if (prm[0] == 0) g_h.click();

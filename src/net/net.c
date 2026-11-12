@@ -20,7 +20,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 1
+#define VERSION 2                         /* 2: STATE에 플레이 시간과 전체 조작 수 */
 #define MAXMSG 2048
 
 typedef struct {
@@ -120,6 +120,8 @@ static int send_state(int fd, int to)
     put8(&w, (unsigned)g_solved);
     put8(&w, (unsigned)g_cleared);
     put16(&w, (unsigned)g_moves);
+    put32(&w, (uint32_t)g_ticks);
+    put16(&w, (unsigned)g_total_moves);
     for (int i = 0; i < MAXPLAYER; i++) {
         const Player *p = &g_pl[i];
         put8(&w, (unsigned)p->on);
@@ -171,6 +173,8 @@ static void apply_state(Rd *r)
     int solved = (int)get8(r);
     g_cleared = (int)get8(r);
     g_moves = (int)get16(r);
+    g_ticks = (int)get32(r);
+    g_total_moves = (int)get16(r);
     (void)solved;                                       /* 빛은 아래에서 직접 다시 계산한다 */
     for (int i = 0; i < MAXPLAYER; i++) {
         Player *p = &g_pl[i];
@@ -463,4 +467,10 @@ void net_close(void)
         s_peer.fd = -1;
     }
     if (s_listen >= 0) { close(s_listen); s_listen = -1; }
+    /* 다음 세션(메뉴에서 다시 시작)을 위해 처음 상태로 */
+    s_mode = NET_OFF;
+    s_peer = (Conn){ .fd = -1 };
+    s_sent_level = s_last_seq = -1;
+    s_got_level = s_got_state = 0;
+    s_lost[0] = 0;
 }

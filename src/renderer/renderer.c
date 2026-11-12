@@ -4,6 +4,8 @@
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "renderer/raycast.h"
 
@@ -126,4 +128,86 @@ void renderer_write_ppm(const char *path, int W, int H, int scale)
             fwrite(rgb, 1, 3, f);
         }
     fclose(f);
+}
+
+/* ---------- PNG 저장 ---------- */
+
+static uint32_t crc_table[256];
+
+static uint32_t crc32_update(uint32_t c, const unsigned char *p, size_t n)
+{
+    if (!crc_table[1])
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t v = i;
+            for (int k = 0; k < 8; k++) v = v & 1 ? 0xEDB88320u ^ (v >> 1) : v >> 1;
+            crc_table[i] = v;
+        }
+    for (size_t i = 0; i < n; i++) c = crc_table[(c ^ p[i]) & 255] ^ (c >> 8);
+    return c;
+}
+
+static void put_be32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v;
+}
+
+/* 길이, 종류, 내용, CRC 순서로 청크 하나를 쓴다 */
+static void png_chunk(FILE *f, const char *type, const unsigned char *data, uint32_t len)
+{
+    unsigned char hdr[8];
+    put_be32(hdr, len);
+    memcpy(hdr + 4, type, 4);
+    fwrite(hdr, 1, 8, f);
+    if (len) fwrite(data, 1, len, f);
+    uint32_t c = crc32_update(0xFFFFFFFFu, (const unsigned char *)type, 4);
+    c = crc32_update(c, data, len) ^ 0xFFFFFFFFu;
+    put_be32(hdr, c);
+    fwrite(hdr, 1, 4, f);
+}
+
+int renderer_write_png(const char *path, int W, int H, int scale)
+{
+    int w = W * scale, h = H * scale;
+    size_t row = (size_t)w * 3 + 1, raw_len = row * (size_t)h;   /* 줄마다 필터 바이트(0) + RGB */
+    size_t nblk = (raw_len + 65534) / 65535;
+    size_t zlen = 2 + raw_len + nblk * 5 + 4;                    /* zlib 머리 + 무압축 블록들 + Adler-32 */
+    unsigned char *raw = malloc(raw_len), *z = malloc(zlen);
+    if (!raw || !z) { free(raw); free(z); return -1; }
+    for (int y = 0; y < h; y++) {
+        unsigned char *p = raw + row * (size_t)y;
+        *p++ = 0;
+        for (int x = 0; x < w; x++) {
+            uint32_t c = g_pix[y / scale][x / scale];
+            *p++ = (unsigned char)(c >> 16); *p++ = (unsigned char)(c >> 8); *p++ = (unsigned char)c;
+        }
+    }
+    size_t o = 0;
+    z[o++] = 0x78; z[o++] = 0x01;
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < raw_len; i += 65535) {
+        size_t n = raw_len - i < 65535 ? raw_len - i : 65535;
+        z[o++] = i + n == raw_len;                               /* 마지막 블록 표시, 무압축(00) */
+        z[o++] = (unsigned char)n; z[o++] = (unsigned char)(n >> 8);
+        z[o++] = (unsigned char)~n; z[o++] = (unsigned char)(~n >> 8);
+        memcpy(z + o, raw + i, n);
+        for (size_t k = 0; k < n; k++) { a = (a + raw[i + k]) % 65521; b = (b + a) % 65521; }
+        o += n;
+    }
+    put_be32(z + o, b << 16 | a);
+    o += 4;
+    FILE *f = fopen(path, "wb");
+    if (!f) { perror(path); free(raw); free(z); return -1; }
+    static const unsigned char SIG[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    fwrite(SIG, 1, 8, f);
+    unsigned char ihdr[13];
+    put_be32(ihdr, (uint32_t)w);
+    put_be32(ihdr + 4, (uint32_t)h);
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;   /* 8비트 RGB */
+    png_chunk(f, "IHDR", ihdr, 13);
+    png_chunk(f, "IDAT", z, (uint32_t)o);
+    png_chunk(f, "IEND", NULL, 0);
+    fclose(f);
+    free(raw);
+    free(z);
+    return 0;
 }

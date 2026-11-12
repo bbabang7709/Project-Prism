@@ -42,6 +42,10 @@ extern float cam_yaw, cam_yaw_target, cam_pitch, cam_dist;
 extern int g_solved;                    /* 모든 수정이 켜졌는가 (문 열림) */
 extern int g_moves;                     /* 지금 방에서 조작한 횟수 */
 extern int g_cleared;                   /* 마지막 방의 문까지 지났다 */
+extern int g_ticks;                     /* 플레이한 틱 수 (1/30초, 끝나면 멈춘다) */
+extern int g_total_moves;               /* 모든 방에서 조작한 횟수 */
+
+void game_reset(void);                  /* 새 게임: 플레이어, 카메라, 기록을 처음 값으로 */
 
 void game_init(int level);              /* level번 방(0부터)을 만들고 플레이어 0을 시작 칸에 세워 빛을 계산한다 */
 void game_simulate(void);               /* 빛 계산 → 문 갱신 */
