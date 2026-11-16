@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "game/game.h"
+#include "game/hud.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
 #include "renderer/renderer.h"
@@ -87,12 +88,6 @@ void menu_text(int ch)
 
 /* ---------- 그리기 ---------- */
 
-static uint32_t dim(uint32_t c, int k)    /* k/256 밝기 */
-{
-    unsigned r = (c >> 16 & 255) * (unsigned)k >> 8, g = (c >> 8 & 255) * (unsigned)k >> 8, b = (c & 255) * (unsigned)k >> 8;
-    return r << 16 | g << 8 | b;
-}
-
 /* 가운데 맞춰 글자를 쓴다 */
 static void center(int y, uint32_t fg, uint32_t bg, const char *s)
 {
@@ -118,6 +113,7 @@ static void draw_help(int x0, int y0, int w)
         "+ -            내려다보기 확대·축소",
         "R              방을 처음 상태로",
         "H              도움말 줄 숨기기",
+        "G              화면 방식 (2×2 선명 ↔ 반블록)",
         "ESC            메뉴로 (메뉴에서는 끝내기)",
         "",
         "모든 수정에 맞는 색의 빛을 보내면 문이 열립니다.",
@@ -138,27 +134,19 @@ void menu_draw(int frame)
         return;
     }
     /* 배경: 풀린 방을 바깥에서 내려다보며 천천히 돈다 */
-    int W = g_cols, H = g_rows * 2;
+    int W, H;
     View v;
     game_view(&v);
+    hud_frame_size(&W, &H, &v.paspect);
     v.fp = 0;
     v.nbody = 0;
     v.tx = v.tz = v.sel_obj = -1;
     s_yaw += 0.004f;
     v.cam_yaw = s_yaw;
-    v.cam_pitch = -0.72f;
-    v.cam_dist = 21;
+    v.cam_pitch = -0.9f;
+    v.cam_dist = 18;
     renderer_draw(&v, W, H, frame);
-    static const char HALF[4] = "\xE2\x96\x80";
-    for (int r = 0; r < g_rows; r++)
-        for (int c = 0; c < W; c++) {
-            VCell *cell = &g_back[r][c];
-            cell->fg = dim(g_pix[2 * r][c], 120);
-            cell->bg = dim(g_pix[2 * r + 1][c], 120);
-            memcpy(cell->ch, HALF, 4);
-            cell->ch[4] = 0;
-            cell->wide = 0;
-        }
+    hud_blit(120);                                       /* 배경은 어둡게 */
 
     int bw = 64 < g_cols - 4 ? 64 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 10;
     if (top < 1) top = 1;
@@ -195,5 +183,7 @@ void menu_draw(int frame)
               : s_help ? "Enter / ESC 닫기"
                        : "↑↓ 고르기   ←→ 시작 방 바꾸기   Enter 시작   ESC 끝내기");
     if (s_msg[0]) center(g_rows - 3, 0xFFE6A0, 0x22252F, s_msg);
+    else if (g_cols < 160)                                /* 화면 해상도는 터미널 칸 수로 정해진다 */
+        center(g_rows - 3, 0x9FD4FF, 0x161822, " 더 선명하게 보려면 창을 최대화하거나 Ctrl + - 로 글자를 줄이세요 ");
     term_present();
 }

@@ -11,8 +11,10 @@
 #define BY 1.55f              /* 빛줄기 높이 */
 #define MAXOBJ 32
 #define MAXSEG 512
-#define MAX_W 320             /* 터미널 칸 수 상한 (픽셀 버퍼는 MAX_H * 2 줄) */
+#define MAX_W 320             /* 터미널 칸 수 상한 */
 #define MAX_H 100
+#define PIX_W 720             /* 픽셀 버퍼 크기: 터미널(MAX_W × MAX_H*2)과 스크린샷(720×420)을 모두 담는다 */
+#define PIX_H 420
 #define MAX_THREADS 8
 #define PI 3.14159265f
 

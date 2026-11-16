@@ -16,7 +16,7 @@ Player g_pl[MAXPLAYER] = {
 };
 int g_me;
 
-float cam_yaw = 0.62f, cam_yaw_target = 0.62f, cam_pitch = -0.78f, cam_dist = 19;
+float cam_yaw = 0.62f, cam_yaw_target = 0.62f, cam_pitch = -0.98f, cam_dist = 17.5f;
 
 int g_solved;
 int g_moves;
@@ -31,8 +31,8 @@ void game_reset(void)
                             .carry = -1, .tobj = -1, .tx = -1, .tz = -1 };
     g_me = 0;
     cam_yaw = cam_yaw_target = 0.62f;
-    cam_pitch = -0.78f;
-    cam_dist = 19;
+    cam_pitch = -0.98f;
+    cam_dist = 17.5f;
     g_solved = g_moves = g_cleared = g_ticks = g_total_moves = 0;
 }
 
@@ -415,7 +415,7 @@ void game_view(View *v)
     for (int i = 0; i < MAXPLAYER; i++)                   /* 1인칭에서는 내 몸은 그리지 않는다 */
         if (g_pl[i].on && !(i == g_me && me->fp)) bodies[n++] = (Body){ g_pl[i].x, g_pl[i].z, i };
     *v = (View){ me->fp, me->x, me->z, me->yaw, me->pitch, cam_yaw, cam_pitch, cam_dist, me->tx, me->tz, me->tobj,
-                 g_seg, g_nseg, bodies, n };
+                 g_seg, g_nseg, bodies, n, 1 };
 }
 
 void game_print_state(const char *title)

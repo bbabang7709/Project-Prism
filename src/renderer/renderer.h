@@ -25,10 +25,11 @@ typedef struct {
     int nseg;
     const Body *bodies;               /* 그릴 플레이어 몸들 (1인칭이면 자기 몸은 빼고 넘긴다) */
     int nbody;
+    float paspect;                    /* 픽셀 하나의 세로/가로 비 (0이면 1: 정사각형). 터미널 사분 블록은 2 */
 } View;
 
 /* 그린 결과. 위에서부터 H줄, 왼쪽부터 W칸을 쓴다 (0xRRGGBB) */
-extern uint32_t g_pix[MAX_H * 2][MAX_W];
+extern uint32_t g_pix[PIX_H][PIX_W];
 
 int renderer_init(void);              /* 작업 스레드를 만들고 쓰는 스레드 수를 돌려준다 */
 void renderer_shutdown(void);         /* 작업 스레드를 끝내고 기다린다 */

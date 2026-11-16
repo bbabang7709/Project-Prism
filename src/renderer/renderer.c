@@ -12,13 +12,17 @@
 /* ---------- 스레드 ---------- */
 
 static int g_nthreads = 1;
-static pthread_barrier_t g_go, g_done;
+static pthread_barrier_t g_go, g_mid, g_done;
 static volatile int g_wquit;
 static pthread_t g_tid[MAX_THREADS];
 
+/* 한 프레임: 모든 스레드가 자기 줄을 그린 뒤(g_mid에서 다 같이 기다림),
+ * 이웃 줄까지 다 그려진 상태에서 경계 픽셀을 다시 쏘아 매끄럽게 한다 */
 static void render_rows(int id)
 {
     raycast_rows(id, g_nthreads);
+    pthread_barrier_wait(&g_mid);
+    raycast_aa_rows(id, g_nthreads);
 }
 
 static void *worker(void *arg)
@@ -39,6 +43,7 @@ int renderer_init(void)
     nthreads = nthreads < 1 ? 1 : nthreads > MAX_THREADS ? MAX_THREADS : nthreads;
     g_nthreads = nthreads;
     pthread_barrier_init(&g_go, NULL, (unsigned)nthreads);
+    pthread_barrier_init(&g_mid, NULL, (unsigned)nthreads);
     pthread_barrier_init(&g_done, NULL, (unsigned)nthreads);
     for (int i = 1; i < nthreads; i++) pthread_create(&g_tid[i], NULL, worker, (void *)(intptr_t)i);
     return nthreads;
@@ -74,8 +79,15 @@ static void post_pass(int W, int H, int sel_id, int frame)
             float z = g_depth[j][i], zl = g_depth[j][i - 1], zr = g_depth[j][i + 1], zu = g_depth[j - 1][i], zd = g_depth[j + 1][i];
             float iz = 1 / z, lap = fabsf(1 / zl + 1 / zr - 2 * iz) + fabsf(1 / zu + 1 / zd - 2 * iz);
             float far = fmaxf(fmaxf(zl, zr), fmaxf(zu, zd));
-            if (lap > iz * 0.15f && far > z * 1.04f) g_pix[j][i] = scale_c(g_pix[j][i], 0.45f);
-            else if (g_id[j][i + 1] != id || g_id[j + 1][i] != id) g_pix[j][i] = scale_c(g_pix[j][i], 0.72f);
+            /* 물체와 사람(id 98 이상)은 진한 윤곽선으로 배경과 확실히 떼어 놓고,
+             * 벽과 바닥의 윤곽선은 옅게 해서 물체가 먼저 눈에 들어오게 한다 */
+            int thing = id >= 98;
+            if (lap > iz * 0.15f && far > z * 1.04f) g_pix[j][i] = scale_c(g_pix[j][i], thing ? 0.35f : 0.62f);
+            else if (g_id[j][i + 1] != id || g_id[j + 1][i] != id || g_id[j][i - 1] != id || g_id[j - 1][i] != id) {
+                int nthing = g_id[j][i + 1] >= 98 || g_id[j + 1][i] >= 98 || g_id[j][i - 1] >= 98 || g_id[j - 1][i] >= 98;
+                if (thing) g_pix[j][i] = scale_c(g_pix[j][i], 0.45f);     /* 물체 테두리 안쪽 */
+                else if (!nthing && (g_id[j][i + 1] != id || g_id[j + 1][i] != id)) g_pix[j][i] = scale_c(g_pix[j][i], 0.86f);
+            }
         }
 }
 
@@ -93,14 +105,21 @@ static void setup_frame(const View *v, int W, int H, int frame)
         F->ox = v->px; F->oy = EYE_Y; F->oz = v->pz;
         F->tanh = 0.72f;
     } else {
-        F->ox = RW / 2.0f - F->fx * v->cam_dist;
+        /* 방 가운데를 보되, 카메라 쪽으로 조금 당긴 점을 본다.
+         * 위에서 비스듬히 보면 가까운 쪽 모서리가 화면 아래로 더 길게 늘어나기 때문이다 */
+        float hl = sqrtf(F->fx * F->fx + F->fz * F->fz) + 1e-6f, pull = 1.2f;
+        float tx = RW / 2.0f - F->fx / hl * pull, tz = RD / 2.0f - F->fz / hl * pull;
+        F->ox = tx - F->fx * v->cam_dist;
         F->oy = 1.0f - F->fy * v->cam_dist;
-        F->oz = RD / 2.0f - F->fz * v->cam_dist;
+        F->oz = tz - F->fz * v->cam_dist;
         F->tanh = 0.58f;
     }
     float nl = sqrtf(F->fx * F->fx + F->fz * F->fz) + 1e-6f;
     F->nearx = -F->fx / nl; F->nearz = -F->fz / nl;
     F->W = W; F->H = H;
+    F->pix = 2 * F->tanh / (float)W;
+    F->aspect = (float)H / (float)W * (v->paspect > 0 ? v->paspect : 1);
+    F->pixl = F->pix * (v->paspect > 1 ? v->paspect : 1);
     F->frame = frame;
     F->fp = v->fp;
     F->tx = v->tx; F->tz = v->tz;

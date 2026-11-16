@@ -145,6 +145,10 @@ static void on_press(int vk)
     }
     if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
     else if (vk == 'H') hud_toggle_help();
+    else if (vk == 'G') {                                 /* 화면 방식 바꾸기 */
+        hud_set_quad(!hud_quad());
+        game_message(g_me, hud_quad() ? "선명한 화면: 한 칸에 2×2 픽셀" : "반블록 화면: 한 칸에 1×2 픽셀 (블록 글자 이음매가 보이면)");
+    }
     else if (vk == 'F') do_action(ACT_TAKE);
     else if (vk == 'Q') do_action(ACT_ROT_LEFT);
     else if (vk == 'E') do_action(ACT_ROT_RIGHT);
@@ -158,7 +162,8 @@ static void on_quit(void) { g_quit = 1; }
 
 int main(int argc, char **argv)
 {
-    int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1, level_set = 0, host_port = 0;
+    int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1, level_set = 0, host_port = 0, shot_w = PIX_W, shot_h = PIX_H;
+    int term_cols = 0, term_rows = 0;
     float fx = 0, fz = 0, fyaw = 0, fpitch = 0;
     const char *shot = NULL, *join = NULL;
     for (int i = 1; i < argc; i++) {
@@ -172,6 +177,22 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--select") && i + 1 < argc) sel = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) { level = atoi(argv[++i]); level_set = 1; }
         else if (!strcmp(argv[i], "--levels") && i + 1 < argc) s_level_dir = argv[++i];
+        else if (!strcmp(argv[i], "--halfblock")) hud_set_quad(0);
+        else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* 개발용: 터미널 화면 미리보기 PNG */
+            shot = argv[++i];
+            term_cols = atoi(argv[++i]); term_rows = atoi(argv[++i]);
+            if (term_cols < 20 || term_rows < 10 || term_cols > MAX_W || term_rows > MAX_H) {
+                fprintf(stderr, "prism: --term-shot 칸 수는 20x10 ~ %dx%d입니다\n", MAX_W, MAX_H);
+                return 1;
+            }
+        }
+        else if (!strcmp(argv[i], "--size") && i + 2 < argc) {
+            shot_w = atoi(argv[++i]); shot_h = atoi(argv[++i]);
+            if (shot_w < 16 || shot_h < 16 || shot_w > PIX_W || shot_h > PIX_H) {
+                fprintf(stderr, "prism: --size는 16x16 ~ %dx%d입니다\n", PIX_W, PIX_H);
+                return 1;
+            }
+        }
         else if (!strcmp(argv[i], "--fp") && i + 4 < argc) {
             fp_shot = 1;
             fx = strtof(argv[++i], NULL); fz = strtof(argv[++i], NULL);
@@ -181,8 +202,8 @@ int main(int argc, char **argv)
             if (i + 2 < argc && argv[i + 1][0] != '-') { cam_yaw = cam_yaw_target = strtof(argv[++i], NULL); cam_pitch = strtof(argv[++i], NULL); }
             if (i + 1 < argc && argv[i + 1][0] != '-') cam_dist = strtof(argv[++i], NULL);
         } else {
-            fprintf(stderr, "usage: %s [--host [port] | --join addr[:port]] [--levels dir] [--level n]\n"
-                            "       %*s [--check] [--solve] [--shot file.ppm|file.png [yaw pitch [dist]]] [--fp x z yaw pitch] [--select n]\n"
+            fprintf(stderr, "usage: %s [--host [port] | --join addr[:port]] [--levels dir] [--level n] [--halfblock]\n"
+                            "       %*s [--check] [--solve] [--shot file.ppm|file.png [yaw pitch [dist]]] [--size w h] [--fp x z yaw pitch] [--select n]\n"
                             "       옵션 없이 실행하면 시작 메뉴가 열립니다\n",
                     argv[0], (int)strlen(argv[0]), "");
             return 1;
@@ -224,18 +245,34 @@ int main(int argc, char **argv)
         }
         game_find_target(0);
         if (sel >= 0 && sel < g_nobj) p0->tobj = sel;
-        if (shot) {
-            int W = 240, H = 140;
+        if (shot && term_cols) {                          /* 터미널 화면 미리보기: 칸으로 옮긴 결과를 블록 모양 그대로 그린다 */
+            g_cols = term_cols;
+            g_rows = term_rows;
+            int W, H;
+            View view;
+            game_view(&view);
+            hud_frame_size(&W, &H, &view.paspect);
+            renderer_draw(&view, W, H, 0);
+            hud_blit(256);
+            int cw = PIX_W / g_cols;
+            if (cw > 8) cw = 8;
+            cw &= ~1;
+            while (cw > 2 && cw * 2 * g_rows > PIX_H) cw -= 2;
+            hud_rasterize(cw, cw * 2);
+            renderer_write_png(shot, g_cols * cw, g_rows * cw * 2, 1);
+            printf("wrote %s (%dx%d cells, %s)\n", shot, g_cols, g_rows, hud_quad() ? "2x2 quadrant" : "half block");
+        } else if (shot) {
+            int W = shot_w, H = shot_h, cr = W / 120 > 2 ? W / 120 : 2;   /* 기본 720×420을 그대로 그린다 (늘리지 않음) */
             View view;
             game_view(&view);
             int64_t t0 = now_us();
             renderer_draw(&view, W, H, 0);
             double ms = (double)(now_us() - t0) / 1000.0;
             if (p0->fp)
-                for (int k = -2; k <= 2; k++) { g_pix[H / 2][W / 2 + k] = 0xE8E8E8; g_pix[H / 2 + k][W / 2] = 0xE8E8E8; }
+                for (int k = -cr; k <= cr; k++) { g_pix[H / 2][W / 2 + k] = 0xE8E8E8; g_pix[H / 2 + k][W / 2] = 0xE8E8E8; }
             size_t sl = strlen(shot);
-            if (sl > 4 && !strcmp(shot + sl - 4, ".png")) renderer_write_png(shot, W, H, 3);
-            else renderer_write_ppm(shot, W, H, 3);
+            if (sl > 4 && !strcmp(shot + sl - 4, ".png")) renderer_write_png(shot, W, H, 1);
+            else renderer_write_ppm(shot, W, H, 1);
             printf("wrote %s (%dx%d px, %.1f ms with %d threads)\n", shot, W, H, ms, nthreads);
         }
         renderer_shutdown();

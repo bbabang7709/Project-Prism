@@ -8,9 +8,9 @@
 /* 프레임 정보와 결과 버퍼. 원본처럼 이 파일의 전역 배열로 두어야
  * 컴파일러가 버퍼 쓰기와 Frame 읽기가 겹치지 않음을 알고, 원본과 같은 계산 순서를 만든다. */
 Frame g_fr;
-uint32_t g_pix[MAX_H * 2][MAX_W];
-float g_depth[MAX_H * 2][MAX_W];
-uint16_t g_id[MAX_H * 2][MAX_W];
+uint32_t g_pix[PIX_H][PIX_W];
+float g_depth[PIX_H][PIX_W];
+uint16_t g_id[PIX_H][PIX_W];
 
 /* 프레임마다 복사해 두는 빛줄기 선분과 플레이어 몸들.
  * 원본처럼 모듈 안 배열로 읽어야 -ffast-math에서 계산 결과가 픽셀 단위까지 같다. */
@@ -27,6 +27,16 @@ void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody)
     s_nbody = nbody < 0 ? 0 : nbody > MAXBODY ? MAXBODY : nbody;
     memcpy(s_body, body, sizeof *body * (size_t)s_nbody);
 }
+
+/* 픽셀 하나가 덮는 구간 [e - fw/2, e + fw/2]이 띠 [a, b]와 겹치는 비율.
+ * 가는 선을 픽셀 크기(fw)에 맞춰 칠한다: 선이 픽셀보다 가늘면 끊기지 않고 옅어진다 */
+static inline float band(float e, float a, float b, float fw)
+{
+    float h = fmaxf(fw * 0.5f, 1e-4f), lo = fmaxf(e - h, a), hi = fminf(e + h, b);
+    return clampf((hi - lo) / (2 * h), 0, 1);
+}
+
+static inline float mixf(float a, float b, float k) { return a + (b - a) * k; }
 
 /* 플레이어별 색: 몸, 머리 (0번은 원래 색) */
 static const float BODY_COL[2][2][3] = {
@@ -51,38 +61,43 @@ static inline float sd_box(float x, float y, float z, float hx, float hy, float 
     return sqrtf(ox * ox + oy * oy + oz * oz) + fminf(fmaxf(qx, fmaxf(qy, qz)), 0);
 }
 
-/* 물체 모양: 칸 가운데 바닥 기준 좌표 (x, y, z). mat에 재질 번호 */
+/* 물체 모양: 칸 가운데 바닥 기준 좌표 (x, y, z). mat에 재질 번호.
+ * 위에서 내려다봐도 종류를 알 수 있게: 모든 물체는 둥근 받침 위에 있고(윗면에 종류별 색 고리),
+ * 거울 판은 두껍고 윗면이 밝아서 위에서 보면 거울 방향이 밝은 막대로 보인다 */
 enum { M_BASE, M_SILVER, M_FRAME, M_GLASSY, M_PRISM, M_FILTER, M_BODY, M_NOZZLE, M_GEM };
+
+#define BASE_R 0.42f                    /* 받침 반지름 */
+#define BASE_H 0.10f                    /* 받침 높이 */
 
 static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
 {
-    float d = sd_box(x, y - 0.05f, z, 0.36f, 0.05f, 0.36f), e;
+    float d = fmaxf(sqrtf(x * x + z * z) - BASE_R, fabsf(y - BASE_H / 2) - BASE_H / 2), e;
     *mat = M_BASE;
     switch (o->kind) {
     case O_MIRROR:
     case O_SPLIT: {
         float a = (float)o->rot * PI / 8, c = cosf(a), s = sinf(a);
         float u = x * c + z * s, w = -x * s + z * c;
-        e = sd_box(u, y - 0.55f, w, 0.38f, 0.34f, 0.05f);
-        if (e < d) { d = e; *mat = (fabsf(u) > 0.32f || fabsf(y - 0.55f) > 0.28f || fabsf(w) > 0.035f) ? M_FRAME : o->kind == O_MIRROR ? M_SILVER : M_GLASSY; }
-        e = sd_box(u, y - 0.16f, w, 0.05f, 0.12f, 0.05f);
+        e = sd_box(u, y - 0.56f, w, 0.40f, 0.33f, 0.065f);       /* 거울 판: 양 끝 세로 틀만 구리색 */
+        if (e < d) { d = e; *mat = fabsf(u) > 0.35f ? M_FRAME : o->kind == O_MIRROR ? M_SILVER : M_GLASSY; }
+        e = sd_box(u, y - 0.17f, w, 0.05f, 0.08f, 0.05f);         /* 받침과 판을 잇는 기둥 */
         if (e < d) { d = e; *mat = M_FRAME; }
         break;
     }
-    case O_PRISM: {
+    case O_PRISM: {                                               /* 세모기둥 (안쪽 반지름 0.22) */
         float t = -1e9f;
         for (int k = 0; k < 3; k++) {
             float a = PI / 2 + (float)k * 2 * PI / 3;
-            t = fmaxf(t, x * cosf(a) + z * sinf(a) - 0.15f);
+            t = fmaxf(t, x * cosf(a) + z * sinf(a) - 0.22f);
         }
-        e = fmaxf(t, fabsf(y - 0.5f) - 0.34f);
+        e = fmaxf(t, fabsf(y - 0.46f) - 0.36f);
         if (e < d) { d = e; *mat = M_PRISM; }
         break;
     }
     case O_FILTER:
         /* 색유리 상자: 어느 방향의 빛이든 지나가며 걸러진다 (광학과 같은 모양). 네 모서리 기둥과 위아래 띠는 틀 */
-        e = sd_box(x, y - 0.52f, z, 0.26f, 0.3f, 0.26f);
-        if (e < d) { d = e; *mat = ((fabsf(x) > 0.21f && fabsf(z) > 0.21f) || fabsf(y - 0.52f) > 0.25f) ? M_FRAME : M_FILTER; }
+        e = sd_box(x, y - 0.50f, z, 0.28f, 0.32f, 0.28f);
+        if (e < d) { d = e; *mat = ((fabsf(x) > 0.23f && fabsf(z) > 0.23f) || fabsf(y - 0.50f) > 0.27f) ? M_FRAME : M_FILTER; }
         break;
     case O_EMIT:
         if (o->rot) {                                     /* 동쪽이 아닌 광원: 쏘는 방향으로 돌린다 (45도 단위) */
@@ -95,7 +110,7 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
         if (e < d) { d = e; *mat = M_NOZZLE; }
         break;
     case O_CRYSTAL:
-        e = (fabsf(x) + fabsf(y - 0.62f) * 0.7f + fabsf(z) - 0.36f) * 0.57f;
+        e = (fabsf(x) + fabsf(y - 0.60f) * 0.7f + fabsf(z) - 0.38f) * 0.57f;
         if (e < d) { d = e; *mat = M_GEM; }
         break;
     }
@@ -105,28 +120,30 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
 /* 표면 한 점이 받는 빛: 은은한 위쪽 조명 + 빛줄기 주변의 색 + 켜진 수정 */
 static void surface_light(float px, float py, float pz, float nx, float ny, float nz, float *lr, float *lg, float *lb)
 {
+    /* 기본 조명을 밝게 해서 물체 모양과 색이 빛줄기 없이도 보이게 하고,
+     * 빛줄기·수정이 주변을 물들이는 범위는 좁게 해서 물체를 뿌옇게 덮지 않게 한다 */
     float ndl = fmaxf(0, nx * 0.35f + ny * 0.85f + nz * 0.4f);
-    float base = 0.22f + 0.38f * ndl;
-    *lr = base; *lg = base; *lb = base * 1.1f;
+    float base = 0.34f + 0.50f * ndl;
+    *lr = base; *lg = base; *lb = base * 1.06f;
     for (int i = 0; i < s_nseg; i++) {
         const Seg *s = &s_seg[i];
         float ex = s->x1 - s->x0, ez = s->z1 - s->z0, l2 = ex * ex + ez * ez;
         float t = l2 > 0 ? clampf(((px - s->x0) * ex + (pz - s->z0) * ez) / l2, 0, 1) : 0;
         float dx = px - (s->x0 + ex * t), dy = py - BY, dz = pz - (s->z0 + ez * t);
         float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > 6) continue;
-        float f = 1 / (1 + d2 / 0.18f);
-        f *= f * 1.6f;
+        if (d2 > 2) continue;
+        float f = 1 / (1 + d2 / 0.08f);
+        f *= f * 0.9f;
         *lr += s->r * f; *lg += s->g * f; *lb += s->b * f;
     }
     for (int i = 0; i < g_nobj; i++) {
         const Obj *o = &g_obj[i];
         if (o->kind != O_CRYSTAL && o->kind != O_EMIT) continue;
-        float k = o->kind == O_EMIT ? 0.5f : o->lit ? 1.6f : 0.12f;
+        float k = o->kind == O_EMIT ? 0.35f : o->lit ? 1.1f : 0.08f;
         float dx = px - ((float)o->x + 0.5f), dy = py - 1.6f, dz = pz - ((float)o->z + 0.5f);
         float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > 9) continue;
-        float f = k / (1 + d2 / 0.5f);
+        if (d2 > 4) continue;
+        float f = k / (1 + d2 / 0.3f);
         f *= f;
         *lr += o->col[0] * f; *lg += o->col[1] * f; *lb += o->col[2] * f;
     }
@@ -134,15 +151,16 @@ static void surface_light(float px, float py, float pz, float nx, float ny, floa
 
 /* 바닥의 빛 자국: 빛줄기는 바닥보다 BY - 1만큼 떠 있어서 비스듬히 보면 지나는 칸과 어긋나 보인다.
  * 빛줄기 바로 아래 바닥에 가는 줄을 더해 실제로 지나는 칸을 알 수 있게 한다 */
-static void floor_trace(float px, float pz, float *lr, float *lg, float *lb)
+static void floor_trace(float px, float pz, float fw, float *lr, float *lg, float *lb)
 {
+    float w = fmaxf(0.05f, 0.6f * fw), lim = 9 * w * w, kw = 0.05f / w;   /* 픽셀보다 가늘지 않게, 넓힌 만큼 옅게 */
     for (int i = 0; i < s_nseg; i++) {
         const Seg *s = &s_seg[i];
         float ex = s->x1 - s->x0, ez = s->z1 - s->z0, l2 = ex * ex + ez * ez;
         float t = l2 > 0 ? clampf(((px - s->x0) * ex + (pz - s->z0) * ez) / l2, 0, 1) : 0;
         float dx = px - (s->x0 + ex * t), dz = pz - (s->z0 + ez * t), d2 = dx * dx + dz * dz;
-        if (d2 > 0.04f) continue;
-        float f = 0.55f * expf(-d2 / (0.05f * 0.05f));
+        if (d2 > lim) continue;
+        float f = 0.55f * kw * expf(-d2 / (w * w));
         *lr += s->r * f; *lg += s->g * f; *lb += s->b * f;
     }
 }
@@ -175,8 +193,8 @@ static int near_wall(const Frame *F, int x, int z)
     return cx * F->nearx + cz * F->nearz > 2.0f;
 }
 
-/* 화면 광선과 빛줄기 선분 사이의 가장 가까운 거리 */
-static float ray_seg_dist(float ox, float oy, float oz, float dx, float dy, float dz, float tmax, const Seg *s)
+/* 화면 광선과 빛줄기 선분 사이의 가장 가까운 거리. *tc에 광선 위 가장 가까운 점까지의 거리 */
+static float ray_seg_dist(float ox, float oy, float oz, float dx, float dy, float dz, float tmax, const Seg *s, float *tc)
 {
     float ax = s->x0, ay = BY, az = s->z0, ex = s->x1 - s->x0, ez = s->z1 - s->z0;
     float rx = ox - ax, ry = oy - ay, rz = oz - az;
@@ -186,6 +204,7 @@ static float ray_seg_dist(float ox, float oy, float oz, float dx, float dy, floa
     float u = e > 1e-8f ? clampf((b * t + f) / e, 0, 1) : 0;
     t = clampf((b * u - c) / a, 0, tmax);
     float qx = ox + dx * t - (ax + ex * u), qy = oy + dy * t - ay, qz = oz + dz * t - (az + ez * u);
+    *tc = t;
     return sqrtf(qx * qx + qy * qy + qz * qz);
 }
 
@@ -257,49 +276,62 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                 }
                 float nx = axis == 0 ? (float)-sx : 0, ny = axis == 1 ? (float)-sy : 0, nz = axis == 2 ? (float)-sz : 0;
                 float u = axis == 0 ? hz - floorf(hz) : hx - floorf(hx), v = axis == 1 ? hz - floorf(hz) : hy - floorf(hy);
-                float ar, ag, ab;
-                int hl = 0;
+                /* 이 점에서 픽셀 하나가 표면 위에 덮는 길이 (비스듬할수록 길다) */
+                float fws = tcell * F->pix / fmaxf(fabsf(dx * nx + dy * ny + dz * nz), 0.2f);
+                float edge = fminf(fminf(u, 1 - u), fminf(v, 1 - v));    /* 칸 가장자리까지 거리 */
+                float ar, ag, ab, hl = 0;
                 if (b == B_FLOOR) {
                     float k = ((x + z) & 1) ? 1.0f : 0.86f;
+                    k *= 1 - 0.4f * band(edge, -0.04f, 0.04f, fws);       /* 칸 경계선 */
                     ar = 0.26f * k; ag = 0.27f * k; ab = 0.32f * k;
-                    if (u < 0.04f || u > 0.96f || v < 0.04f || v > 0.96f) { ar *= 0.6f; ag *= 0.6f; ab *= 0.6f; }
-                    if (x == F->tx && z == F->tz && axis == 1 && (u < 0.09f || u > 0.91f || v < 0.09f || v > 0.91f)) hl = 1;
+                    if (x == F->tx && z == F->tz && axis == 1) hl = band(edge, 0, 0.09f, fws);
                 } else if (b == B_DOOR) {
-                    ar = 0.42f; ag = 0.30f; ab = 0.18f;
-                    if (fabsf(u - 0.5f) < 0.04f || fabsf(v - 0.5f) < 0.04f) { ar = 0.9f; ag = 0.75f; ab = 0.35f; }
+                    float c = band(fminf(fabsf(u - 0.5f), fabsf(v - 0.5f)), -0.04f, 0.04f, fws);
+                    ar = mixf(0.42f, 0.9f, c); ag = mixf(0.30f, 0.75f, c); ab = mixf(0.18f, 0.35f, c);
                 } else if (b == B_PLATE || b == B_PLATE_ON) {                    /* 발판: 구리색 판, 눌리면 초록 */
-                    int rim = u < 0.12f || u > 0.88f || v < 0.12f || v > 0.88f;
+                    float c = axis != 1 ? 1 : band(edge, -0.12f, 0.12f, fws);    /* 테두리 */
                     if (b == B_PLATE_ON) { ar = 0.30f; ag = 0.95f; ab = 0.45f; }
                     else { ar = 0.80f; ag = 0.52f; ab = 0.24f; }
-                    if (rim || axis != 1) { ar = 0.22f; ag = 0.22f; ab = 0.27f; }
-                    if (x == F->tx && z == F->tz && axis == 1 && (u < 0.09f || u > 0.91f || v < 0.09f || v > 0.91f)) hl = 1;
+                    ar = mixf(ar, 0.22f, c); ag = mixf(ag, 0.22f, c); ab = mixf(ab, 0.27f, c);
+                    if (x == F->tx && z == F->tz && axis == 1) hl = band(edge, 0, 0.09f, fws);
                 } else if (b == B_GATE) {                                        /* 창살: 세로 막대 */
                     ar = 0.34f; ag = 0.50f; ab = 0.66f;
-                    if (ny == 0 && fmodf(u * 4 + 0.25f, 1) < 0.5f) { ar = 0.12f; ag = 0.17f; ab = 0.24f; }
-                    if (ny == 0 && fabsf(v - 0.5f) < 0.05f) { ar = 0.55f; ag = 0.72f; ab = 0.90f; }
+                    if (ny == 0) {
+                        float f = fmodf(u * 4 + 0.25f, 1);
+                        float c = band(fminf(fabsf(f - 0.25f), fminf(fabsf(f - 1.25f), fabsf(f + 0.75f))) / 4, -0.0625f, 0.0625f, fws);
+                        ar = mixf(ar, 0.12f, c); ag = mixf(ag, 0.17f, c); ab = mixf(ab, 0.24f, c);
+                        float h = band(fabsf(v - 0.5f), -0.05f, 0.05f, fws);
+                        ar = mixf(ar, 0.55f, h); ag = mixf(ag, 0.72f, h); ab = mixf(ab, 0.90f, h);
+                    }
                 } else {
                     float k = ny > 0 ? 1.15f : 1.0f;
+                    if (ny == 0) {                                               /* 벽돌 줄눈 (가로 0.5칸, 세로 1칸마다, 줄마다 반 칸 어긋남) */
+                        float vv = hy - floorf(hy), row = floorf(hy * 2);
+                        float uu = (axis == 0 ? hz : hx) + ((int)row % 2) * 0.5f;
+                        float e1 = fmodf(vv * 2, 1) * 0.5f, e2 = fmodf(uu, 1);
+                        float c = fmaxf(band(e1, 0, 0.035f, fws) + band(e1, 0.5f, 0.535f, fws),
+                                        band(e2, 0, 0.04f, fws) + band(e2, 1, 1.04f, fws));
+                        k *= 1 - 0.3f * fminf(c, 1);
+                    }
                     ar = 0.33f * k; ag = 0.33f * k; ab = 0.40f * k;
-                    float vv = hy - floorf(hy), row = floorf(hy * 2);
-                    float uu = (axis == 0 ? hz : hx) + ((int)row % 2) * 0.5f;
-                    if (ny == 0 && (fmodf(vv * 2, 1) < 0.07f || fmodf(uu, 1) < 0.04f)) { ar *= 0.7f; ag *= 0.7f; ab *= 0.7f; }
                 }
                 float lr, lg, lb;
                 surface_light(hx + nx * 0.01f, hy + ny * 0.01f, hz + nz * 0.01f, nx, ny, nz, &lr, &lg, &lb);
-                if (axis == 1 && ny > 0 && y == 0) floor_trace(hx, hz, &lr, &lg, &lb);   /* 빛줄기 바로 아래 바닥 */
-                if (hl) layer(&acc, 255, 205, 80, 1);                            /* 물체를 놓을 칸 */
-                else layer(&acc, ar * lr * 255, ag * lg * 255, ab * lb * 255, 1);
+                if (axis == 1 && ny > 0 && y == 0) floor_trace(hx, hz, fws, &lr, &lg, &lb);   /* 빛줄기 바로 아래 바닥 */
+                layer(&acc, mixf(ar * lr * 255, 255, hl), mixf(ag * lg * 255, 205, hl), mixf(ab * lb * 255, 80, hl), 1);   /* hl: 물체를 놓을 칸 */
                 thit = tcell;
                 *zdep = tcell * (dx * F->fx + dy * F->fy + dz * F->fz);
                 *id = (uint16_t)(b * 8 + axis * 2 + (nx + ny + nz > 0) + 1);
                 break;
             }
             if (b == B_GLASS) {                                                  /* 유리 블록: 옅게 비치고 모서리는 밝게 */
-                float hx = ox + dx * tcell, hy = oy + dy * tcell, hz = oz + dz * tcell;
+                float hx = ox + dx * tcell, hy = oy + dy * tcell, hz = oz + dz * tcell, fw = tcell * F->pix;
                 float fx = hx - floorf(hx), fy = hy - floorf(hy), fz = hz - floorf(hz);
-                int edges = (fx < 0.05f || fx > 0.95f) + (fy < 0.05f || fy > 0.95f) + (fz < 0.05f || fz > 0.95f);
-                if (edges >= 2) layer(&acc, 190, 235, 255, 0.55f);
-                else layer(&acc, 120, 190, 230, 0.14f);
+                float c0 = band(fminf(fx, 1 - fx), -0.05f, 0.05f, fw), c1 = band(fminf(fy, 1 - fy), -0.05f, 0.05f, fw),
+                      c2 = band(fminf(fz, 1 - fz), -0.05f, 0.05f, fw);
+                /* 맞은 면 방향은 늘 1에 가깝다: 나머지 둘 중 큰 값이 모서리에 가까운 정도 */
+                float e = c0 + c1 + c2 - fmaxf(c0, fmaxf(c1, c2)) - fminf(c0, fminf(c1, c2));
+                layer(&acc, mixf(120, 190, e), mixf(190, 235, e), mixf(230, 255, e), mixf(0.14f, 0.55f, e));
             }
             if (y == 1 && g_objat[z][x]) {                                       /* 물체: 칸 안에서 거리 함수로 구 추적 */
                 const Obj *o = &g_obj[g_objat[z][x] - 1];
@@ -322,26 +354,44 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                     nx /= nl; ny /= nl; nz /= nl;
                     float ar = 0.3f, ag = 0.3f, ab = 0.35f, er = 0, eg = 0, eb = 0, spec = 0;
                     switch (mat) {
-                    case M_BASE:                                              /* 움직일 수 있는 물체는 구리색 받침 */
-                        if (o->movable) { ar = 0.62f; ag = 0.40f; ab = 0.22f; spec = 0.4f; }
-                        else { ar = 0.20f; ag = 0.21f; ab = 0.26f; }
+                    case M_BASE: {                                            /* 움직일 수 있는 물체는 구리색 받침 */
+                        if (o->movable) { ar = 0.58f; ag = 0.38f; ab = 0.22f; spec = 0.3f; }
+                        else { ar = 0.24f; ag = 0.25f; ab = 0.30f; }
+                        if (ny > 0.7f) {                                      /* 윗면의 종류별 색 고리 (스스로 조금 빛난다) */
+                            float rc = sqrtf(px * px + pz * pz), c = band(rc, 0.30f, 0.40f, t * F->pix);
+                            float qr, qg, qb;
+                            switch (o->kind) {
+                            case O_MIRROR: qr = 0.85f; qg = 0.92f; qb = 1.0f; break;
+                            case O_SPLIT: qr = 0.35f; qg = 0.90f; qb = 1.0f; break;
+                            case O_PRISM: qr = 1.0f; qg = 1.0f; qb = 1.0f; break;
+                            case O_EMIT: qr = 1.0f; qg = 0.82f; qb = 0.35f; break;
+                            default: {                                        /* 필터, 수정: 자기 색 (꺼진 수정은 옅게) */
+                                float k = o->kind == O_CRYSTAL && !o->lit ? 0.55f : 1.0f;
+                                qr = o->col[0] * k + 0.08f; qg = o->col[1] * k + 0.08f; qb = o->col[2] * k + 0.08f;
+                            }
+                            }
+                            ar = mixf(ar, qr, c); ag = mixf(ag, qg, c); ab = mixf(ab, qb, c);
+                            er = qr * 70 * c; eg = qg * 70 * c; eb = qb * 70 * c;
+                        }
                         break;
-                    case M_FRAME: ar = 0.85f; ag = 0.66f; ab = 0.32f; spec = 0.5f; break;
-                    case M_SILVER: ar = 0.80f; ag = 0.86f; ab = 0.95f; spec = 1; break;
-                    case M_GLASSY: ar = 0.45f; ag = 0.80f; ab = 0.95f; spec = 0.7f; break;
+                    }
+                    case M_FRAME: ar = 0.80f; ag = 0.58f; ab = 0.30f; spec = 0.5f; break;
+                    case M_SILVER: ar = 0.88f; ag = 0.93f; ab = 1.0f; spec = 1; er = 45; eg = 48; eb = 55; break;       /* 거울: 밝은 은색 */
+                    case M_GLASSY: ar = 0.40f; ag = 0.88f; ab = 1.0f; spec = 0.7f; er = 15; eg = 50; eb = 60; break;   /* 반투명 거울: 하늘색 */
                     case M_PRISM: {
                         float a = atan2f(nz, nx);
-                        ar = 0.7f + 0.3f * cosf(a); ag = 0.7f + 0.3f * cosf(a + 2.1f); ab = 0.75f + 0.25f * cosf(a + 4.2f);
+                        ar = 0.78f + 0.22f * cosf(a); ag = 0.78f + 0.22f * cosf(a + 2.1f); ab = 0.82f + 0.18f * cosf(a + 4.2f);
+                        er = eg = eb = 40;
                         spec = 0.8f;
                         break;
                     }
-                    case M_FILTER: ar = o->col[0] * 0.8f; ag = o->col[1] * 0.8f; ab = o->col[2] * 0.9f; er = o->col[0] * 40; eg = o->col[1] * 40; eb = o->col[2] * 60; break;
-                    case M_BODY: ar = 0.25f; ag = 0.26f; ab = 0.32f; break;
+                    case M_FILTER: ar = o->col[0] * 0.8f; ag = o->col[1] * 0.8f; ab = o->col[2] * 0.9f; er = o->col[0] * 90; eg = o->col[1] * 90; eb = o->col[2] * 110; break;
+                    case M_BODY: ar = 0.30f; ag = 0.31f; ab = 0.38f; break;
                     case M_NOZZLE: er = 255; eg = 250; eb = 235; ar = ag = ab = 0; break;
                     case M_GEM: {
-                        float k = o->lit ? 1.0f : 0.35f, flick = o->lit ? 0.85f + 0.15f * sinf((float)F->frame * 0.15f + (float)x) : 1;
+                        float k = o->lit ? 1.0f : 0.5f, flick = o->lit ? 0.85f + 0.15f * sinf((float)F->frame * 0.15f + (float)x) : 1;
                         ar = o->col[0] * k * 0.6f + 0.05f; ag = o->col[1] * k * 0.6f + 0.05f; ab = o->col[2] * k * 0.6f + 0.05f;
-                        float em = o->lit ? 190 * flick : 25;
+                        float em = o->lit ? 200 * flick : 45;
                         er = o->col[0] * em; eg = o->col[1] * em; eb = o->col[2] * em;
                         spec = 0.6f;
                         break;
@@ -380,10 +430,13 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
     float tm = thit < 1e8f ? thit : 200;
     for (int i = 0; i < s_nseg; i++) {
         const Seg *s = &s_seg[i];
-        float d = ray_seg_dist(ox, oy, oz, dx, dy, dz, tm, s);
-        if (d > 0.45f) continue;
-        float core = expf(-(d * d) / (0.045f * 0.045f)), halo = expf(-(d * d) / (0.16f * 0.16f));
-        float k = core * 1.4f + halo * 0.45f;
+        float tc, d = ray_seg_dist(ox, oy, oz, dx, dy, dz, tm, s, &tc);
+        /* 빛줄기 심은 픽셀보다 가늘어지지 않게 넓히고, 넓힌 만큼 옅게 한다 (멀리서 끊겨 보이지 않게) */
+        /* 후광은 좁고 옅게: 넓게 번지면 빛줄기 근처의 물체가 뿌옇게 덮인다 */
+        float fw = tc * F->pixl, sc = fmaxf(0.045f, 0.6f * fw), sh = fmaxf(0.10f, 1.3f * fw);
+        if (d > fmaxf(0.32f, 3 * sh)) continue;
+        float core = expf(-(d * d) / (sc * sc)), halo = expf(-(d * d) / (sh * sh));
+        float k = core * 1.4f * sqrtf(0.045f / sc) + halo * 0.28f * (0.10f / sh);
         acc.r += (s->r * 255 * 0.85f + core * 120) * k;
         acc.g += (s->g * 255 * 0.85f + core * 120) * k;
         acc.b += (s->b * 255 * 0.85f + core * 120) * k;
@@ -394,7 +447,7 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
 void raycast_rows(int first, int step)
 {
     const Frame *F = &g_fr;
-    float aspect = (float)F->H / (float)F->W;
+    float aspect = F->aspect;
     for (int j = first; j < F->H; j += step) {
         float sy = (1 - 2 * ((float)j + 0.5f) / (float)F->H) * F->tanh * aspect;
         for (int i = 0; i < F->W; i++) {
@@ -402,5 +455,52 @@ void raycast_rows(int first, int step)
             g_pix[j][i] = trace(F, F->fx + F->rx * sx + F->ux * sy, F->fy + F->ry * sx + F->uy * sy,
                                 F->fz + F->rz * sx + F->uz * sy, &g_depth[j][i], &g_id[j][i]);
         }
+    }
+}
+
+/* (fi, fj) 위치(픽셀 단위, 소수 가능)로 쏘는 광선 */
+static uint32_t trace_at(const Frame *F, float fi, float fj)
+{
+    float aspect = F->aspect;
+    float sy = (1 - 2 * fj / (float)F->H) * F->tanh * aspect, sx = (2 * fi / (float)F->W - 1) * F->tanh, zd;
+    uint16_t id;
+    return trace(F, F->fx + F->rx * sx + F->ux * sy, F->fy + F->ry * sx + F->uy * sy, F->fz + F->rz * sx + F->uz * sy, &zd, &id);
+}
+
+/* 경계 픽셀인가: 물체 번호가 이웃과 다르거나 깊이가 크게 다르다 */
+static int is_edge(int i, int j, int W, int H)
+{
+    static const int D[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    uint16_t id = g_id[j][i];
+    float z = g_depth[j][i];
+    for (int k = 0; k < 4; k++) {
+        int ii = i + D[k][0], jj = j + D[k][1];
+        if (ii < 0 || jj < 0 || ii >= W || jj >= H) continue;
+        float zn = g_depth[jj][ii];
+        if (g_id[jj][ii] != id || zn > z * 1.04f || z > zn * 1.04f) return 1;
+    }
+    return 0;
+}
+
+void raycast_aa_rows(int first, int step)
+{
+    /* 회전 격자 4점: 가로·세로 경계 모두에서 서로 다른 위치를 본다 */
+    static const float OFS[4][2] = { { 0.375f, 0.125f }, { 0.875f, 0.375f }, { 0.625f, 0.875f }, { 0.125f, 0.625f } };
+    const Frame *F = &g_fr;
+    uint32_t row[PIX_W];
+    for (int j = first; j < F->H; j += step) {
+        int any = 0;
+        for (int i = 0; i < F->W; i++) {
+            row[i] = g_pix[j][i];
+            if (!is_edge(i, j, F->W, F->H)) continue;
+            unsigned r = 0, g = 0, b = 0;
+            for (int k = 0; k < 4; k++) {
+                uint32_t c = trace_at(F, (float)i + OFS[k][0], (float)j + OFS[k][1]);
+                r += c >> 16 & 255; g += c >> 8 & 255; b += c & 255;
+            }
+            row[i] = (r / 4) << 16 | (g / 4) << 8 | b / 4;
+            any = 1;
+        }
+        if (any) memcpy(g_pix[j], row, sizeof row[0] * (size_t)F->W);   /* 다른 스레드가 읽는 g_id, g_depth는 그대로 */
     }
 }

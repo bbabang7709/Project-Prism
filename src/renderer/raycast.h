@@ -20,6 +20,9 @@ typedef struct {
     float ox, oy, oz, fx, fy, fz, rx, ry, rz, ux, uy, uz, tanh;
     float nearx, nearz;       /* 카메라 쪽 방향 (앞 벽 잘라내기) */
     int W, H, frame, fp, tx, tz;
+    float pix;                /* 거리 1에서 픽셀 하나의 크기. 거리 t에서는 t * pix (선 굵기를 픽셀에 맞춘다) */
+    float aspect;             /* 화면 세로/가로 비 = H / W × 픽셀 세로/가로 비 */
+    float pixl;               /* 빛줄기 굵기용 픽셀 크기: 가로·세로 중 큰 쪽 기준 (세로로 긴 픽셀에서 끊기지 않게) */
 } Frame;
 
 /* 이번 프레임의 빛줄기 선분과 그릴 플레이어 몸들을 복사해 둔다.
@@ -34,11 +37,15 @@ static inline uint32_t pack(float r, float g, float b)
 
 /* 렌더러 안에서만 쓰는 프레임 정보와 결과 버퍼 (g_pix는 renderer.h에 공개) */
 extern Frame g_fr;
-extern uint32_t g_pix[MAX_H * 2][MAX_W];
-extern float g_depth[MAX_H * 2][MAX_W];
-extern uint16_t g_id[MAX_H * 2][MAX_W];
+extern uint32_t g_pix[PIX_H][PIX_W];
+extern float g_depth[PIX_H][PIX_W];
+extern uint16_t g_id[PIX_H][PIX_W];
 
 /* g_fr로 first, first + step, first + 2*step, ... 번째 줄을 그려 g_pix, g_depth, g_id에 쓴다 */
 void raycast_rows(int first, int step);
+
+/* 같은 줄들 중 경계(물체 번호나 깊이가 이웃과 다른) 픽셀만 네 번 더 쏘아 평균을 낸다 (안티에일리어싱).
+ * 모든 줄의 raycast_rows가 끝난 뒤에 부른다. g_pix만 바꾸고 g_depth, g_id는 그대로 둔다 */
+void raycast_aa_rows(int first, int step);
 
 #endif
