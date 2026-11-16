@@ -4,6 +4,7 @@
  *   혼자 하기       ◀ 시작 방 ▶   (2인용 방은 빼고 고른다)
  *   호스트로 시작   ◀ 시작 방 ▶   (모든 방)
  *   참가하기        주소 입력
+ *   방 만들기       ◀ 고칠 방 / 새 방 ▶
  *   조작법
  *   끝내기
  *
@@ -12,11 +13,11 @@
 #ifndef PRISM_GAME_MENU_H
 #define PRISM_GAME_MENU_H
 
-enum { MENU_NONE, MENU_SOLO, MENU_HOST, MENU_JOIN, MENU_QUIT };
+enum { MENU_NONE, MENU_SOLO, MENU_HOST, MENU_JOIN, MENU_EDIT, MENU_QUIT };
 
 typedef struct {
     int what;                           /* MENU_* */
-    int level;                          /* 시작 방 (0부터, 혼자 하기는 2인용 방을 뺀 목록 기준) */
+    int level;                          /* 시작 방 (0부터, 혼자 하기는 2인용 방을 뺀 목록 기준). 에디터는 -1이면 새 방 */
     const char *addr;                   /* 참가할 주소 */
 } MenuChoice;
 

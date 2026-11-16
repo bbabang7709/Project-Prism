@@ -47,6 +47,7 @@ typedef struct {
     int coop;                 /* 2인용 방 (혼자 할 때는 건너뛴다) */
     int has_stand;            /* 풀이 확인용: 누군가 (stand_x, stand_z)에 서 있어야 풀린다 */
     int stand_x, stand_z;
+    char file[64];            /* 읽어 온 파일 이름 (폴더 빼고). 기본 방이나 새 방은 빈 문자열 */
 } Level;
 
 extern const char *KIND_NAME[];          /* O_* 번호로 찾는 물체 이름 */
@@ -64,6 +65,20 @@ int world_load_levels(const char *dir, char *err, size_t errlen);
 
 /* 2인용 방(coop)을 목록에서 뺀다 (혼자 할 때) */
 void world_drop_coop(void);
+
+/* 방 파일을 읽어 온 폴더 (방 파일이 없어 기본 방을 쓰면 "levels") */
+extern char g_level_dir[256];
+
+/* 방이 규칙에 맞는지 검사한다 (광원·수정이 있는가, 시작 칸이 빈 바닥인가, 테두리가 벽·문인가 등).
+ * 맞으면 0, 아니면 -1과 err에 이유 */
+int world_check_level(const Level *lv, char *err, size_t errlen);
+
+/* 방을 g_level_dir/file로 저장한다. 같은 폴더의 임시 파일에 쓰고 fsync한 뒤 rename으로 바꿔 넣어,
+ * 저장 도중 꺼져도 원래 파일이 깨지지 않는다. 성공하면 0 */
+int world_save_level(const Level *lv, const char *file, char *err, size_t errlen);
+
+/* 새 방 파일 이름: 폴더에 있는 가장 큰 번호 + 1 ("07-custom.lvl") */
+void world_new_file_name(char *out, size_t n);
 
 /* 방 파일 없이 기본 방 하나(원래 프로토타입의 방)를 쓴다 */
 void world_use_builtin(void);

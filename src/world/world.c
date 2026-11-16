@@ -196,12 +196,107 @@ int world_load_levels(const char *dir, char *err, size_t errlen)
         char path[512];
         snprintf(path, sizeof path, "%s/%s", dir, names[i]);
         if (rc == 0 && parse_level(path, &g_levels[i], err, errlen) < 0) rc = -1;
+        if (rc == 0) snprintf(g_levels[i].file, sizeof g_levels[i].file, "%.60s", names[i]);
         free(names[i]);
     }
     if (rc < 0) return -1;
     g_nlevels = n;
     g_cur_level = 0;
+    if (n) snprintf(g_level_dir, sizeof g_level_dir, "%.250s", dir);
     return n;
+}
+
+/* ---------- 방 검사와 저장 (에디터) ---------- */
+
+char g_level_dir[256] = "levels";
+
+int world_check_level(const Level *lv, char *err, size_t errlen)
+{
+    int nobj = 0, nemit = 0, ncrystal = 0;
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++) {
+            char c = lv->map[z][x];
+            int border = x == 0 || z == 0 || x == RW - 1 || z == RD - 1;
+            if (!strchr(MAP_CHARS, c)) { snprintf(err, errlen, "(%d, %d)에 알 수 없는 글자 '%c'", x, z, c); return -1; }
+            if (border && c != '#' && c != 'D') { snprintf(err, errlen, "테두리 (%d, %d)는 벽이나 문이어야 해요", x, z); return -1; }
+            if (strchr(OBJ_CHARS, c)) {
+                nobj++;
+                nemit += c == 'E';
+                ncrystal += c == 'R' || c == 'G' || c == 'B' || c == 'Y';
+            }
+        }
+    if (nobj > MAXOBJ) { snprintf(err, errlen, "물체가 너무 많아요 (%d개, 최대 %d개)", nobj, MAXOBJ); return -1; }
+    if (!nemit) { snprintf(err, errlen, "광원이 없어요"); return -1; }
+    if (!ncrystal) { snprintf(err, errlen, "수정이 없어요"); return -1; }
+    if (lv->map[lv->sz][lv->sx] != '.') { snprintf(err, errlen, "시작 칸 (%d, %d)이 빈 바닥이 아니에요", lv->sx, lv->sz); return -1; }
+    return 0;
+}
+
+/* 버퍼를 끝까지 쓴다 (부분 쓰기, EINTR 처리) */
+static int write_all_fd(int fd, const char *p, size_t n)
+{
+    while (n > 0) {
+        ssize_t k = write(fd, p, n);
+        if (k < 0 && errno == EINTR) continue;
+        if (k <= 0) return -1;
+        p += k;
+        n -= (size_t)k;
+    }
+    return 0;
+}
+
+int world_save_level(const Level *lv, const char *file, char *err, size_t errlen)
+{
+    if (world_check_level(lv, err, errlen) < 0) return -1;
+    char text[4096];
+    size_t n = 0;
+    n += (size_t)snprintf(text + n, sizeof text - n, "# PRISM 방 파일 (레벨 에디터로 저장)\nname %s\nstart %d %d %c\n",
+                          lv->name[0] ? lv->name : "이름 없는 방", lv->sx, lv->sz, lv->face ? lv->face : 'E');
+    if (lv->coop) n += (size_t)snprintf(text + n, sizeof text - n, "coop %d %d\n", lv->stand_x, lv->stand_z);
+    else if (lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "stand %d %d\n", lv->stand_x, lv->stand_z);
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++)
+            if (lv->rot[z][x] && strchr(OBJ_CHARS, lv->map[z][x]))
+                n += (size_t)snprintf(text + n, sizeof text - n, "rot %d %d %d\n", x, z, lv->rot[z][x]);
+    n += (size_t)snprintf(text + n, sizeof text - n, "map\n");
+    for (int z = 0; z < RD; z++) n += (size_t)snprintf(text + n, sizeof text - n, "%.*s\n", RW, lv->map[z]);
+    if (n >= sizeof text) { snprintf(err, errlen, "방 파일이 너무 커요"); return -1; }
+
+    mkdir(g_level_dir, 0755);                             /* 기본 방만 쓰던 경우 폴더가 없을 수 있다 */
+    char path[512], tmp[512];
+    snprintf(path, sizeof path, "%s/%s", g_level_dir, file);
+    snprintf(tmp, sizeof tmp, "%s/.%s.tmp", g_level_dir, file);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) { snprintf(err, errlen, "%s: %s", tmp, strerror(errno)); return -1; }
+    if (write_all_fd(fd, text, n) < 0 || fsync(fd) < 0) {
+        snprintf(err, errlen, "%s: %s", tmp, strerror(errno));
+        close(fd);
+        unlink(tmp);
+        return -1;
+    }
+    close(fd);
+    if (rename(tmp, path) < 0) {                          /* 한 번에 바꿔 넣는다 */
+        snprintf(err, errlen, "%s: %s", path, strerror(errno));
+        unlink(tmp);
+        return -1;
+    }
+    return 0;
+}
+
+void world_new_file_name(char *out, size_t n)
+{
+    int best = 0;
+    DIR *d = opendir(g_level_dir);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            int k = atoi(e->d_name);
+            size_t len = strlen(e->d_name);
+            if (len > 4 && !strcmp(e->d_name + len - 4, ".lvl") && k > best) best = k;
+        }
+        closedir(d);
+    }
+    snprintf(out, n, "%02d-custom.lvl", best + 1);
 }
 
 void world_drop_coop(void)

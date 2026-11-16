@@ -24,7 +24,7 @@ typedef struct {
     void (*click)(void);      /* 마우스 왼쪽 클릭 */
     void (*wheel)(int dir);   /* 마우스 휠: 위 -1, 아래 +1 */
     void (*quit)(void);       /* Ctrl+C */
-    void (*text)(int ch);     /* 글자 하나 (ASCII 32~126, 입력란용, NULL이면 안 씀) */
+    void (*text)(int ch);     /* 글자 하나 (유니코드, 32 이상. 입력란용, NULL이면 안 씀) */
 } InputHandlers;
 
 void input_init(const InputHandlers *h);

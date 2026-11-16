@@ -22,6 +22,7 @@
 
 #include "game/game.h"
 #include "game/hud.h"
+#include "game/editor.h"
 #include "game/menu.h"
 #include "net/net.h"
 #include "platform/clock.h"
@@ -30,7 +31,8 @@
 #include "renderer/renderer.h"
 #include "world/world.h"
 
-enum { UI_MENU, UI_PLAY };
+enum { UI_MENU, UI_PLAY, UI_EDIT };
+static int s_testing;                   /* 에디터에서 시험 플레이 중 (ESC로 에디터에 돌아간다) */
 static int s_ui = UI_PLAY;
 static const char *s_level_dir;         /* --levels */
 static int s_port = NET_PORT;           /* 메뉴에서 호스트로 시작할 때의 포트 */
@@ -78,6 +80,7 @@ static void prepare_levels(int solo)
 
 static void go_menu(const char *msg)
 {
+    s_testing = 0;
     net_close();
     game_reset();
     prepare_levels(0);
@@ -131,7 +134,44 @@ static void do_action(int act)
 
 static void on_click(void) { if (s_ui == UI_PLAY) do_action(ACT_TAKE); }
 static void on_wheel(int dir) { if (s_ui == UI_PLAY) do_action(dir < 0 ? ACT_ROT_LEFT : ACT_ROT_RIGHT); }
-static void on_text(int ch) { if (s_ui == UI_MENU) menu_text(ch); }
+static void on_text(int ch)
+{
+    if (s_ui == UI_MENU) menu_text(ch);
+    else if (s_ui == UI_EDIT) editor_text(ch);
+}
+
+/* 레벨 에디터 열기: level번 방을 고친다 (-1이면 새 방) */
+static void start_edit(int level)
+{
+    game_reset();
+    prepare_levels(0);
+    Level src;
+    if (level >= 0 && level < g_nlevels) src = g_levels[level];
+    editor_open(level >= 0 && level < g_nlevels ? &src : NULL);
+    s_ui = UI_EDIT;
+}
+
+/* 에디터의 방을 그대로 혼자 해 본다 */
+static void start_test(void)
+{
+    Level lv = *editor_level();
+    game_reset();
+    g_levels[0] = lv;
+    g_nlevels = 1;
+    game_init(0);
+    game_find_target(g_me);
+    game_message(g_me, "시험 플레이: ESC를 누르면 에디터로 돌아가요");
+    s_testing = 1;
+    s_ui = UI_PLAY;
+}
+
+static void back_to_editor(void)
+{
+    s_testing = 0;
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].on = 0;
+    editor_resume();
+    s_ui = UI_EDIT;
+}
 
 static void on_press(int vk)
 {
@@ -140,10 +180,18 @@ static void on_press(int vk)
         if (c.what == MENU_SOLO) start_solo(c.level);
         else if (c.what == MENU_HOST) start_host(c.level);
         else if (c.what == MENU_JOIN) start_join(c.addr);
+        else if (c.what == MENU_EDIT) start_edit(c.level);
         else if (c.what == MENU_QUIT) g_quit = 1;
         return;
     }
-    if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
+    if (s_ui == UI_EDIT) {
+        int r = editor_key(vk);
+        if (r == EDIT_QUIT) go_menu(NULL);
+        else if (r == EDIT_TEST) start_test();
+        return;
+    }
+    if (s_testing && (vk == VK_ESC || (g_cleared && vk == VK_ENTER))) back_to_editor();
+    else if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
     else if (vk == 'H') hud_toggle_help();
     else if (vk == 'G') {                                 /* 화면 방식 바꾸기 */
         hud_set_quad(!hud_quad());
@@ -330,6 +378,7 @@ int main(int argc, char **argv)
             uint64_t t;
             if (read(tfd, &t, sizeof t) != sizeof t) continue;
             if (s_ui == UI_MENU) menu_draw(s_frame++);
+            else if (s_ui == UI_EDIT) editor_draw(s_frame++);
             else {
                 if (net_mode() == NET_CLIENT) game_local_tick();
                 else game_tick(1.0f / 30);

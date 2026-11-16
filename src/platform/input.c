@@ -45,10 +45,29 @@ static void key_tap(int vk)
     g_ktap[vk] = g_now + (was ? 90 : 200);
 }
 
-static void text(int c) { if (g_h.text && c >= 32 && c < 127) g_h.text(c); }
+static void text(int c) { if (g_h.text && c >= 32 && c != 127) g_h.text(c); }
+
+/* 일반 터미널의 UTF-8 글자(한글 등)를 모아 유니코드 문자 하나로 알린다 */
+static void utf8_byte(int c)
+{
+    static int cp, need;
+    if (c < 0x80) { need = 0; return; }
+    if ((c & 0xC0) == 0x80) {                           /* 이어지는 바이트 */
+        if (!need) return;
+        cp = cp << 6 | (c & 0x3F);
+        if (--need == 0) text(cp);
+        return;
+    }
+    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; need = 1; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; need = 2; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; need = 3; }
+    else need = 0;
+}
 
 static void plain_char(int c)
 {
+    if (c >= 0x80) { utf8_byte(c); return; }
+    utf8_byte(c);
     text(c);                                            /* 글자 입력란이 쓰는 글자 */
     if (c == 3) g_h.quit();
     else if (c == '\r' || c == '\n') key_tap(VK_ENTER);
@@ -75,7 +94,7 @@ static void csi(const unsigned char *p, int n, char fin)
     if (fin == '_') {                                    /* win32-input-mode: Vk;Sc;Uc;Kd;Cs;Rc */
         g_win32 = 1;
         if (prm[0] == 'C' && prm[3] && (prm[4] & 0x0C)) g_h.quit();
-        if (prm[3] && prm[2] >= 32 && prm[2] < 127) text(prm[2]);   /* 키 반복도 글자로 */
+        if (prm[3] && prm[2] >= 32) text(prm[2]);   /* 유니코드 글자 (키 반복도 글자로) */
         if (prm[0] > 0) key_event(prm[0], prm[3]);
     } else if (priv && fin == 'M') {                     /* 마우스: 왼쪽 클릭 = 들기/놓기, 휠 = 돌리기 */
         if (prm[0] == 0) g_h.click();

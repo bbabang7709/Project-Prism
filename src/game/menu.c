@@ -9,11 +9,12 @@
 #include "renderer/renderer.h"
 #include "world/world.h"
 
-enum { IT_SOLO, IT_HOST, IT_JOIN, IT_HELP, IT_QUIT, NITEM };
+enum { IT_SOLO, IT_HOST, IT_JOIN, IT_EDIT, IT_HELP, IT_QUIT, NITEM };
 
 static int s_sel;                       /* 고른 항목 */
 static int s_solo[MAXLEVEL], s_nsolo;   /* 혼자 할 수 있는 방 (g_levels 번호) */
 static int s_room_solo, s_room_host;    /* 고른 시작 방: s_solo 안의 번호, g_levels 번호 */
+static int s_room_edit;                 /* 고칠 방: g_levels 번호, s_nall이면 새 방 */
 static char s_names[MAXLEVEL][64];
 static int s_coop[MAXLEVEL], s_nall;
 static char s_addr[64];                 /* 참가할 주소 */
@@ -36,6 +37,7 @@ void menu_open(const char *msg)
     }
     if (s_room_solo >= s_nsolo) s_room_solo = 0;
     if (s_room_host >= s_nall) s_room_host = 0;
+    if (s_room_edit > s_nall) s_room_edit = s_nall;
     s_editing = s_help = 0;
     menu_message(msg);
 }
@@ -64,12 +66,14 @@ MenuChoice menu_key(int vk)
         int d = vk == VK_LEFT ? -1 : 1;
         if (s_sel == IT_SOLO && s_nsolo) s_room_solo = (s_room_solo + d + s_nsolo) % s_nsolo;
         if (s_sel == IT_HOST && s_nall) s_room_host = (s_room_host + d + s_nall) % s_nall;
+        if (s_sel == IT_EDIT) s_room_edit = (s_room_edit + d + s_nall + 1) % (s_nall + 1);
         break;
     }
     case VK_ENTER:
         if (s_sel == IT_SOLO && s_nsolo) { c.what = MENU_SOLO; c.level = s_room_solo; }
         else if (s_sel == IT_SOLO) menu_message("혼자 할 수 있는 방이 없어요");
         else if (s_sel == IT_HOST) { c.what = MENU_HOST; c.level = s_room_host; }
+        else if (s_sel == IT_EDIT) { c.what = MENU_EDIT; c.level = s_room_edit < s_nall ? s_room_edit : -1; }
         else if (s_sel == IT_JOIN) { s_editing = 1; menu_message("호스트 주소를 입력하고 Enter (예: 192.168.0.10 또는 127.0.0.1:5462)"); }
         else if (s_sel == IT_HELP) s_help = 1;
         else c.what = MENU_QUIT;
@@ -81,7 +85,7 @@ MenuChoice menu_key(int vk)
 
 void menu_text(int ch)
 {
-    if (!s_editing || ch == ' ') return;
+    if (!s_editing || ch == ' ' || ch > 126) return;     /* 주소는 ASCII만 */
     size_t n = strlen(s_addr);
     if (n + 1 < sizeof s_addr) { s_addr[n] = (char)ch; s_addr[n + 1] = 0; }
 }
@@ -148,7 +152,7 @@ void menu_draw(int frame)
     renderer_draw(&v, W, H, frame);
     hud_blit(120);                                       /* 배경은 어둡게 */
 
-    int bw = 64 < g_cols - 4 ? 64 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 10;
+    int bw = 64 < g_cols - 4 ? 64 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 11;
     if (top < 1) top = 1;
     box(bx, top, bw, 5, 0x161822);
     center(top + 1, 0xFFD27A, 0x161822, "P  R  I  S  M");
@@ -162,7 +166,7 @@ void menu_draw(int frame)
             int y = iy + 1 + i * 2, on = i == s_sel;
             uint32_t bg = on ? 0x2E3550 : 0x1A1E2A, fg = on ? 0xFFFFFF : 0xC8CCD8;
             for (int x = bx + 1; x < bx + bw - 1; x++) g_back[y][x] = (VCell){ fg, bg, " ", 0 };
-            static const char *LABEL[NITEM] = { "혼자 하기", "호스트로 시작 (2인 협동)", "참가하기 (2인 협동)", "조작법", "끝내기" };
+            static const char *LABEL[NITEM] = { "혼자 하기", "호스트로 시작 (2인 협동)", "참가하기 (2인 협동)", "방 만들기 (레벨 에디터)", "조작법", "끝내기" };
             term_text(bx + 3, y, on ? 0xFFD27A : 0x6A7088, bg, on ? "▶" : " ");
             term_text(bx + 6, y, fg, bg, "%s", LABEL[i]);
             char val[96] = "";
@@ -171,6 +175,9 @@ void menu_draw(int frame)
                 snprintf(val, sizeof val, "◀ 방 %d  %.40s ▶", s_room_solo + 1, s_names[lv]);
             } else if (i == IT_HOST && s_nall) {
                 snprintf(val, sizeof val, "◀ 방 %d  %.34s%s ▶", s_room_host + 1, s_names[s_room_host], s_coop[s_room_host] ? " (2인)" : "");
+            } else if (i == IT_EDIT) {
+                if (s_room_edit < s_nall) snprintf(val, sizeof val, "◀ 방 %d  %.34s 고치기 ▶", s_room_edit + 1, s_names[s_room_edit]);
+                else snprintf(val, sizeof val, "◀ 새 방 ▶");
             } else if (i == IT_JOIN) {
                 snprintf(val, sizeof val, "[%-21.21s%s]", s_addr, s_editing && (frame / 8) % 2 ? "_" : " ");
             }

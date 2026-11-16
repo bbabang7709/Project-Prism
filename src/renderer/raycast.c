@@ -315,6 +315,8 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                     }
                     ar = 0.33f * k; ag = 0.33f * k; ab = 0.40f * k;
                 }
+                /* 표시할 칸(게임: 놓을 칸, 에디터: 커서)의 윗면 테두리. 바닥이 아닌 벽·문 윗면도 표시한다 */
+                if (hl == 0 && x == F->tx && z == F->tz && axis == 1 && ny > 0) hl = band(edge, 0, 0.09f, fws);
                 float lr, lg, lb;
                 surface_light(hx + nx * 0.01f, hy + ny * 0.01f, hz + nz * 0.01f, nx, ny, nz, &lr, &lg, &lb);
                 if (axis == 1 && ny > 0 && y == 0) floor_trace(hx, hz, fws, &lr, &lg, &lb);   /* 빛줄기 바로 아래 바닥 */
