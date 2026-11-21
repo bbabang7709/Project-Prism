@@ -122,6 +122,7 @@ static void draw_help(int x0, int y0, int w)
         "",
         "모든 수정에 맞는 색의 빛을 보내면 문이 열립니다.",
         "발판을 누르면 창살이 열리고, 몸은 빛을 가립니다.",
+        "감지기에 빛을 보내도 창살이 열리고, 상자는 빛을 막습니다.",
     };
     int n = (int)(sizeof LINES / sizeof LINES[0]);
     box(x0, y0, w, n + 3, 0x1A1E2A);

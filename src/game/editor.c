@@ -15,10 +15,11 @@
 static const struct { char c; const char *name; } TOOLS[] = {
     { '#', "벽" }, { '|', "기둥" }, { 'g', "유리 블록" }, { 'D', "문" }, { '_', "발판" }, { '=', "창살" },
     { 'E', "광원" }, { 'P', "프리즘" }, { 'M', "거울" }, { 'S', "반투명 거울" }, { 'b', "파랑 필터" }, { 'r', "빨강 필터" },
-    { 'R', "빨강 수정" }, { 'G', "초록 수정" }, { 'B', "파랑 수정" }, { 'Y', "노랑 수정" }, { '@', "시작 위치" },
+    { 'R', "빨강 수정" }, { 'G', "초록 수정" }, { 'B', "파랑 수정" }, { 'Y', "노랑 수정" },
+    { 'O', "감지기" }, { 'T', "순간이동 고리" }, { 'K', "상자" }, { '@', "시작 위치" },
 };
 #define NTOOL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
-static const char OBJ_CHARS[] = "EPMSbrRGBY";
+static const char OBJ_CHARS[] = "EPMSbrRGBYOTK";
 
 static Level s_lv;                      /* 편집 중인 방 */
 static char s_file[64];                 /* 저장할 파일 이름 */
@@ -130,6 +131,12 @@ static void place(void)
     if (border && c != '#' && c != 'D') { msg("테두리에는 벽과 문만 놓을 수 있어요"); return; }
     if (s_cx == s_lv.sx && s_cz == s_lv.sz) { msg("시작 위치예요. 시작 위치를 먼저 옮기세요"); return; }
     if (*cell == c) return;
+    if (c == 'T') {                                       /* 순간이동 고리는 한 쌍까지 */
+        int n = 0;
+        for (int z = 0; z < RD; z++)
+            for (int x = 0; x < RW; x++) n += s_lv.map[z][x] == 'T';
+        if (n >= 2) { msg("순간이동 고리는 한 쌍(2개)까지 놓을 수 있어요"); return; }
+    }
     if (strchr(OBJ_CHARS, c) && !strchr(OBJ_CHARS, *cell) && count_objects() >= MAXOBJ) {
         msg("물체는 %d개까지 놓을 수 있어요", MAXOBJ);
         return;
@@ -170,11 +177,7 @@ static void verify(void)
         for (int x = 0; x < RW; x++) k += s_lv.map[z][x] == 'M' || s_lv.map[z][x] == 'S';
     if (k > 5) { msg("거울이 %d개라 모든 각도를 시험하기엔 너무 많아요 (5개까지)", k); return; }
     apply();
-    if (s_lv.has_stand) {                                 /* 누군가 서 있어야 풀리는 방 */
-        g_pl[1].on = 1;
-        g_pl[1].x = (float)s_lv.stand_x + 0.5f;
-        g_pl[1].z = (float)s_lv.stand_z + 0.5f;
-    }
+    game_solve_setup();                                   /* 누군가 서 있거나 물체를 옮겨야 풀리는 방 */
     game_simulate();
     if (g_solved) {
         msg("처음부터 풀려 있어요. 거울 각도를 바꿔 풀리지 않은 상태로 시작하게 하세요");

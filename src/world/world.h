@@ -14,10 +14,13 @@
  *   rot 6 2 2            (x, z) 칸 물체의 처음 각도 0~7 (거울은 22.5도, 광원은 45도 단위)
  *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀)
  *   stand 4 8            풀이 확인(--solve)에서 누군가 이 칸에 서 있다고 본다 (발판 방)
+ *   move 3 9 13 7        풀이 확인에서 (3, 9) 칸의 물체를 (13, 7)로 옮긴 뒤에 푼다 (4줄까지, 상자 방)
  *   map                  다음 12줄이 16칸짜리 지도
  *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원   P 프리즘  M 거울  S 반투명 거울
  *             b 파랑 필터  r 빨강 필터  R G B Y 수정 (빨강, 초록, 파랑, 노랑)
- *             _ 발판  = 창살 (발판이 모두 눌려 있는 동안 열린다. 발판은 사람이나 물체가 누른다)
+ *             _ 발판  = 창살 (발판이 모두 눌려 있고 감지기가 모두 빛을 받는 동안 열린다. 발판은 사람이나 물체가 누른다)
+ *             O 감지기 (빛을 받으면 켜진다)  T 순간이동 고리 (방에 0개나 2개. 한쪽에 든 빛이 다른 쪽에서 같은 방향으로 나온다)
+ *             K 상자 (들고 다닐 수 있다. 빛을 막고 발판을 누른다)
  */
 #ifndef PRISM_WORLD_H
 #define PRISM_WORLD_H
@@ -29,7 +32,7 @@
 #define MAXLEVEL 16
 
 enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE };   /* 발판(안 눌림/눌림), 창살 */
-enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL };
+enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX };
 
 typedef struct {
     int kind, x, z, rot, movable, held;
@@ -47,6 +50,8 @@ typedef struct {
     int coop;                 /* 2인용 방 (혼자 할 때는 건너뛴다) */
     int has_stand;            /* 풀이 확인용: 누군가 (stand_x, stand_z)에 서 있어야 풀린다 */
     int stand_x, stand_z;
+    int nmove;                /* 풀이 확인용: 물체를 옮긴 뒤에 풀린다 (move x1 z1 x2 z2) */
+    signed char move[4][4];
     char file[64];            /* 읽어 온 파일 이름 (폴더 빼고). 기본 방이나 새 방은 빈 문자열 */
     char note[512];           /* 파일 맨 위의 설명 주석 줄들 ('#' 포함, 줄마다 '\n'). 에디터가 저장할 때 그대로 다시 쓴다 */
 } Level;

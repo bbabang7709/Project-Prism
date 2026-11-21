@@ -282,12 +282,7 @@ int main(int argc, char **argv)
         if (fp_shot) { p0->x = fx; p0->z = fz; p0->yaw = fyaw; p0->pitch = fpitch; }
         if (check) game_print_state("start");
         if (do_solve) {
-            const Level *lv = &g_levels[g_cur_level];
-            if (lv->has_stand) {                          /* 누군가 정해진 칸에 서 있어야 풀리는 방 (2인용 방, 발판 방) */
-                g_pl[1].on = 1;
-                g_pl[1].x = (float)lv->stand_x + 0.5f;
-                g_pl[1].z = (float)lv->stand_z + 0.5f;
-            }
+            game_solve_setup();                           /* 방 파일의 stand·move 적용 */
             int ok = game_solve();
             if (check) game_print_state(ok ? "solved" : "no solution found");
         }

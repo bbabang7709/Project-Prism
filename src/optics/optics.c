@@ -12,7 +12,17 @@ int g_nseg;
 /* 물체에 닿았다고 보는 범위 (렌더러가 그리는 모양과 맞춘 값) */
 #define MIRROR_HALF 0.36f   /* 거울 판의 반 너비 (틀 포함 0.38) */
 #define PRISM_REACH 0.24f   /* 빛이 프리즘 가운데에서 이만큼 안으로 지나야 닿는다 */
-#define OBJ_REACH   0.30f   /* 광원, 수정, 필터 */
+#define OBJ_REACH   0.30f   /* 광원, 수정, 필터, 감지기, 순간이동 고리 */
+#define BOX_HALF    0.30f   /* 상자의 반 너비: 빛은 상자 겉면에서 멈춘다 */
+#define MAX_HOP     8       /* 빛줄기 하나가 순간이동 고리를 지나는 횟수 상한 (두 고리 사이를 맴도는 빛) */
+
+/* 짝이 되는 다른 순간이동 고리 (없으면 NULL) */
+static const Obj *other_portal(const Obj *o)
+{
+    for (int i = 0; i < g_nobj; i++)
+        if (g_obj[i].kind == O_PORTAL && &g_obj[i] != o && !g_obj[i].held) return &g_obj[i];
+    return NULL;
+}
 
 static Body g_body[8];                 /* 이번 계산에서 빛을 가리는 몸들 */
 static int g_nbody;
@@ -37,6 +47,43 @@ static void rot2(float *dx, float *dz, float a)
     *dz = x * s + z * c;
 }
 
+/* 새 장치가 있는 칸에 빛이 들어왔다. st = { x, z, sx, sz }: 지금 위치와 이 빛줄기 선분의 시작점, cell = 지금 칸.
+ * 0: 비켜 감 (계속 진행)  1: 여기서 멈춤  2: 순간이동 (st, cell을 짝 고리 쪽으로 바꿈)
+ * 기존 물체를 처리하는 beam()의 계산 순서(-ffast-math에서 결과가 비트 단위로 같아야 함)를 건드리지 않게 따로 둔다 */
+static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, float dx, float dz, float r, float g, float b, int *hops)
+{
+    float x = st[0], z = st[1], ccx = (float)cell[0] + 0.5f, ccz = (float)cell[1] + 0.5f, qx, qz;
+    if (o->kind == O_BOX) {                               /* 상자: 정사각형 겉면에 처음 닿는 점 (슬랩 방식) */
+        float lo = 0, hi = 1e30f, p[2] = { x, z }, d[2] = { dx, dz }, c[2] = { ccx, ccz };
+        for (int k = 0; k < 2; k++) {
+            if (fabsf(d[k]) < 1e-6f) {
+                if (fabsf(p[k] - c[k]) > BOX_HALF) return 0;
+                continue;
+            }
+            float t1 = (c[k] - BOX_HALF - p[k]) / d[k], t2 = (c[k] + BOX_HALF - p[k]) / d[k];
+            lo = fmaxf(lo, fminf(t1, t2));
+            hi = fminf(hi, fmaxf(t1, t2));
+        }
+        if (lo > hi) return 0;                            /* 상자 모서리를 비켜 감 */
+        add_seg(st[2], st[3], x + dx * lo, z + dz * lo, r, g, b);
+        return 1;
+    }
+    float tq = fmaxf((ccx - x) * dx + (ccz - z) * dz, 0);   /* 칸 가운데에 가장 가까운 점 */
+    qx = x + dx * tq; qz = z + dz * tq;
+    if ((qx - ccx) * (qx - ccx) + (qz - ccz) * (qz - ccz) > OBJ_REACH * OBJ_REACH) return 0;
+    add_seg(st[2], st[3], qx, qz, r, g, b);
+    if (o->kind == O_SENSOR) {
+        o->got[0] += r; o->got[1] += g; o->got[2] += b;
+        return 1;
+    }
+    const Obj *to = other_portal(o);                      /* 순간이동 고리: 짝 고리의 같은 상대 위치에서 같은 방향으로 나온다 */
+    if (!to || ++*hops > MAX_HOP) return 1;
+    st[0] = st[2] = (float)to->x + 0.5f + (qx - ccx);
+    st[1] = st[3] = (float)to->z + 0.5f + (qz - ccz);
+    cell[0] = to->x; cell[1] = to->z;
+    return 2;
+}
+
 /* 빛줄기 하나를 칸 단위로 따라간다. 갈라지는 곳에서만 재귀 */
 static void beam(float x, float z, float dx, float dz, float r, float g, float b, int depth)
 {
@@ -44,6 +91,7 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
     float sx = x, sz = z;
     int cx = (int)floorf(x), cz = (int)floorf(z);
     float nm = is_glass(cx, cz) ? 1.5f : 1.0f;
+    int hops = 0;
     for (int it = 0; it < 400; it++) {
         float tx = dx > 1e-6f ? ((float)cx + 1 - x) / dx : dx < -1e-6f ? ((float)cx - x) / dx : 1e30f;
         float tz = dz > 1e-6f ? ((float)cz + 1 - z) / dz : dz < -1e-6f ? ((float)cz - z) / dz : 1e30f;
@@ -95,6 +143,13 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         int oi = g_objat[cz][cx];
         if (!oi) continue;
         Obj *o = &g_obj[oi - 1];
+        if (o->kind >= O_SENSOR) {                        /* 감지기, 순간이동 고리, 상자 */
+            float st[4] = { x, z, sx, sz };
+            int cell[2] = { cx, cz }, k = new_device(o, st, cell, dx, dz, r, g, b, &hops);
+            if (k == 1) return;
+            if (k == 2) { x = st[0]; z = st[1]; sx = st[2]; sz = st[3]; cx = cell[0]; cz = cell[1]; nm = 1.0f; }
+            continue;
+        }
         /* 물체의 실제 모양에 닿을 때만 반응한다.
          * 거울·반투명 거울은 거울 면(칸 가운데를 지나는 판)과 만나는 점, 나머지는 칸 가운데에 가장 가까운 점 */
         float ccx = (float)cx + 0.5f, ccz = (float)cz + 0.5f;
@@ -179,6 +234,8 @@ int optics_simulate(const Body *bodies, int nbody)
             beam((float)o->x + 0.5f + dx * 0.3f, (float)o->z + 0.5f + dz * 0.3f, dx, dz, o->col[0], o->col[1], o->col[2], 0);
         }
     int all = 1, n = 0;
+    for (int i = 0; i < g_nobj; i++)
+        if (g_obj[i].kind == O_SENSOR) g_obj[i].lit = g_obj[i].got[0] + g_obj[i].got[1] + g_obj[i].got[2] > 0.3f;
     for (int i = 0; i < g_nobj; i++)
         if (g_obj[i].kind == O_CRYSTAL) {
             g_obj[i].lit = crystal_ok(&g_obj[i]);

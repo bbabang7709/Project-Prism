@@ -19,6 +19,8 @@ static Seg s_seg[MAXSEG];
 static int s_nseg;
 static Body s_body[MAXBODY];
 static int s_nbody;
+static float s_glow[MAXOBJ][6];         /* 주변을 물들이는 새 장치들: x, z, 세기, r, g, b */
+static int s_nglow;
 
 void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody)
 {
@@ -26,6 +28,15 @@ void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody)
     memcpy(s_seg, seg, sizeof *seg * (size_t)s_nseg);
     s_nbody = nbody < 0 ? 0 : nbody > MAXBODY ? MAXBODY : nbody;
     memcpy(s_body, body, sizeof *body * (size_t)s_nbody);
+    s_nglow = 0;
+    for (int i = 0; i < g_nobj; i++) {
+        const Obj *o = &g_obj[i];
+        if (o->held || !(o->kind == O_PORTAL || (o->kind == O_SENSOR && o->lit))) continue;
+        float k = o->kind == O_PORTAL ? 0.3f : 0.6f;
+        float *gl = s_glow[s_nglow++];
+        gl[0] = (float)o->x + 0.5f; gl[1] = (float)o->z + 0.5f; gl[2] = k;
+        gl[3] = o->col[0]; gl[4] = o->col[1]; gl[5] = o->col[2];
+    }
 }
 
 /* 픽셀 하나가 덮는 구간 [e - fw/2, e + fw/2]이 띠 [a, b]와 겹치는 비율.
@@ -64,7 +75,7 @@ static inline float sd_box(float x, float y, float z, float hx, float hy, float 
 /* 물체 모양: 칸 가운데 바닥 기준 좌표 (x, y, z). mat에 재질 번호.
  * 위에서 내려다봐도 종류를 알 수 있게: 모든 물체는 둥근 받침 위에 있고(윗면에 종류별 색 고리),
  * 거울 판은 두껍고 윗면이 밝아서 위에서 보면 거울 방향이 밝은 막대로 보인다 */
-enum { M_BASE, M_SILVER, M_FRAME, M_GLASSY, M_PRISM, M_FILTER, M_BODY, M_NOZZLE, M_GEM };
+enum { M_BASE, M_SILVER, M_FRAME, M_GLASSY, M_PRISM, M_FILTER, M_BODY, M_NOZZLE, M_GEM, M_EYE, M_RING, M_CORE, M_CRATE };
 
 #define BASE_R 0.42f                    /* 받침 반지름 */
 #define BASE_H 0.10f                    /* 받침 높이 */
@@ -113,6 +124,33 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
         e = (fabsf(x) + fabsf(y - 0.60f) * 0.7f + fabsf(z) - 0.38f) * 0.57f;
         if (e < d) { d = e; *mat = M_GEM; }
         break;
+    case O_SENSOR:                                        /* 감지기: 짧은 기둥 위의 둥근 렌즈 (빛줄기 높이를 덮는다) */
+        e = fmaxf(sqrtf(x * x + z * z) - 0.17f, fabsf(y - 0.23f) - 0.13f);
+        if (e < d) { d = e; *mat = M_BODY; }
+        e = sqrtf(x * x + (y - 0.50f) * (y - 0.50f) + z * z) - 0.19f;
+        if (e < d) { d = e; *mat = M_EYE; }
+        break;
+    case O_PORTAL: {                                      /* 순간이동 고리: 가로 고리와 천천히 도는 세로 고리, 가운데 빛나는 구슬 */
+        float yy = y - 0.55f, a = (float)g_fr.frame * 0.06f, c = cosf(a), s = sinf(a), u = x * c + z * s, w = -x * s + z * c;
+        float q = sqrtf(x * x + z * z) - 0.27f;
+        e = sqrtf(q * q + yy * yy) - 0.045f;
+        if (e < d) { d = e; *mat = M_RING; }
+        q = sqrtf(u * u + yy * yy) - 0.27f;
+        e = sqrtf(q * q + w * w) - 0.035f;
+        if (e < d) { d = e; *mat = M_RING; }
+        e = sqrtf(x * x + yy * yy + z * z) - 0.11f;
+        if (e < d) { d = e; *mat = M_CORE; }
+        e = fmaxf(sqrtf(x * x + z * z) - 0.035f, fabsf(y - 0.20f) - 0.12f);
+        if (e < d) { d = e; *mat = M_FRAME; }
+        break;
+    }
+    case O_BOX:                                           /* 상자: 나무 상자, 모서리는 구리 띠 (광학의 BOX_HALF와 같은 크기) */
+        e = sd_box(x, y - 0.42f, z, 0.30f, 0.32f, 0.30f);
+        if (e < d) {
+            d = e;
+            *mat = (fabsf(x) > 0.25f) + (fabsf(z) > 0.25f) + (fabsf(y - 0.42f) > 0.27f) >= 2 ? M_FRAME : M_CRATE;
+        }
+        break;
     }
     return d;
 }
@@ -146,6 +184,15 @@ static void surface_light(float px, float py, float pz, float nx, float ny, floa
         float f = k / (1 + d2 / 0.3f);
         f *= f;
         *lr += o->col[0] * f; *lg += o->col[1] * f; *lb += o->col[2] * f;
+    }
+    for (int i = 0; i < s_nglow; i++) {                   /* 켜진 감지기, 순간이동 고리 */
+        const float *gl = s_glow[i];
+        float dx = px - gl[0], dy = py - 1.55f, dz = pz - gl[1];
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > 4) continue;
+        float f = gl[2] / (1 + d2 / 0.3f);
+        f *= f;
+        *lr += gl[3] * f; *lg += gl[4] * f; *lb += gl[5] * f;
     }
 }
 
@@ -368,7 +415,7 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                             case O_PRISM: qr = 1.0f; qg = 1.0f; qb = 1.0f; break;
                             case O_EMIT: qr = 1.0f; qg = 0.82f; qb = 0.35f; break;
                             default: {                                        /* 필터, 수정: 자기 색 (꺼진 수정은 옅게) */
-                                float k = o->kind == O_CRYSTAL && !o->lit ? 0.55f : 1.0f;
+                                float k = (o->kind == O_CRYSTAL || o->kind == O_SENSOR) && !o->lit ? 0.55f : 1.0f;
                                 qr = o->col[0] * k + 0.08f; qg = o->col[1] * k + 0.08f; qb = o->col[2] * k + 0.08f;
                             }
                             }
@@ -396,6 +443,22 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                         float em = o->lit ? 200 * flick : 45;
                         er = o->col[0] * em; eg = o->col[1] * em; eb = o->col[2] * em;
                         spec = 0.6f;
+                        break;
+                    }
+                    case M_EYE:                                                  /* 감지기 렌즈: 꺼지면 어두운 유리, 켜지면 밝은 청록 */
+                        if (o->lit) { ar = 0.55f; ag = 1.0f; ab = 0.85f; er = 120; eg = 235; eb = 200; }
+                        else { ar = 0.10f; ag = 0.20f; ab = 0.22f; er = 10; eg = 28; eb = 30; }
+                        spec = 0.9f;
+                        break;
+                    case M_RING: ar = 0.62f; ag = 0.30f; ab = 0.95f; er = 110; eg = 40; eb = 170; spec = 0.5f; break;
+                    case M_CORE: {
+                        float fl = 0.85f + 0.15f * sinf((float)F->frame * 0.2f + (float)z);
+                        ar = ag = ab = 0; er = 235 * fl; eg = 175 * fl; eb = 255 * fl;
+                        break;
+                    }
+                    case M_CRATE: {                                              /* 나뭇결: 높이에 따라 옅은 줄무늬 */
+                        float k = 0.88f + 0.12f * sinf(py * 55 + (float)(x * 3 + z));
+                        ar = 0.62f * k; ag = 0.42f * k; ab = 0.24f * k;
                         break;
                     }
                     }

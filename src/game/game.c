@@ -45,12 +45,28 @@ static int body_on_cell(const Player *p, int x, int z)
     return (qx - p->x) * (qx - p->x) + (qz - p->z) * (qz - p->z) < PR * PR;
 }
 
-/* 발판과 창살: 발판은 그 칸에 서 있는 사람이나 놓인 물체가 누른다.
- * 발판이 모두 눌려 있는 동안 창살이 열린다. 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
+/* 켜진 감지기 묶음 (물체 번호별 비트). 감지기의 lit는 지난 빛 계산 결과다 */
+static unsigned sensor_mask(int *count)
+{
+    unsigned m = 0;
+    int n = 0;
+    for (int i = 0; i < g_nobj; i++)
+        if (g_obj[i].kind == O_SENSOR) { n++; if (g_obj[i].lit) m |= 1u << i; }
+    if (count) *count = n;
+    return m;
+}
+
+/* 발판·감지기와 창살: 발판은 그 칸에 서 있는 사람이나 놓인 물체가 누른다. 감지기는 빛을 받으면 켜진다.
+ * 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 창살이 열린다. 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
 static void update_plates(void)
 {
     const Level *lv = &g_levels[g_cur_level];
-    int plates = 0, all = 1;
+    int plates = 0, all = 1, nsensor;
+    unsigned lit = sensor_mask(&nsensor);
+    if (nsensor) {
+        plates += nsensor;
+        all = __builtin_popcount(lit) == nsensor;
+    }
     for (int z = 0; z < RD; z++)
         for (int x = 0; x < RW; x++) {
             if (lv->map[z][x] != '_') continue;
@@ -72,15 +88,21 @@ static void update_plates(void)
 }
 
 /* 발판·창살을 갱신하고, 빛을 다시 계산한 뒤(모든 플레이어의 몸이 빛을 가림), 결과에 따라 문을 연다.
- * 창살과 문 블록은 빛을 막으므로 순서는 반드시 "발판·창살 → 빛 계산 → 문 갱신"이다. */
+ * 창살과 문 블록은 빛을 막으므로 순서는 반드시 "발판·창살 → 빛 계산 → 문 갱신"이다.
+ * 감지기가 켜지거나 꺼져 창살이 바뀌면 빛길도 바뀌므로, 감지기가 더 바뀌지 않을 때까지 몇 번 되풀이한다
+ * (창살이 감지기로 가는 빛을 스스로 막는 방이면 4번에서 멈춘다) */
 void game_simulate(void)
 {
-    update_plates();
     Body b[MAXPLAYER];
     int n = 0;
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) b[n++] = (Body){ g_pl[i].x, g_pl[i].z, i };
-    g_solved = optics_simulate(b, n);
+    for (int pass = 0; pass < 4; pass++) {
+        unsigned before = sensor_mask(NULL);
+        update_plates();
+        g_solved = optics_simulate(b, n);
+        if (sensor_mask(NULL) == before) break;
+    }
     world_set_door(g_solved);
 }
 
@@ -110,6 +132,24 @@ void game_init(int level)
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) place_player(i);
     game_simulate();
+}
+
+void game_solve_setup(void)
+{
+    const Level *lv = &g_levels[g_cur_level];
+    if (lv->has_stand) {                                  /* 누군가 정해진 칸에 서 있어야 풀리는 방 (2인용 방, 발판 방) */
+        g_pl[1].on = 1;
+        g_pl[1].x = (float)lv->stand_x + 0.5f;
+        g_pl[1].z = (float)lv->stand_z + 0.5f;
+    }
+    for (int i = 0; i < lv->nmove; i++) {                 /* 물체를 옮겨야 풀리는 방 (상자를 발판이나 빛길에) */
+        const signed char *m = lv->move[i];
+        int oi = g_objat[m[1]][m[0]];
+        if (!oi || g_objat[m[3]][m[2]]) continue;
+        g_objat[m[1]][m[0]] = 0;
+        g_obj[oi - 1].x = m[2]; g_obj[oi - 1].z = m[3];
+        g_objat[m[3]][m[2]] = oi;
+    }
 }
 
 /* 회전 가능한 물체의 모든 각도를 시험해 푸는 방법을 찾는다 (시험과 스크린샷용) */
@@ -427,8 +467,10 @@ void game_print_state(const char *title)
         if (o->kind == O_CRYSTAL)
             printf("  crystal (%d,%d) wants %.0f%.0f%.0f got %.2f %.2f %.2f -> %s\n", o->x, o->z, o->col[0], o->col[1], o->col[2],
                    o->got[0], o->got[1], o->got[2], o->lit ? "LIT" : "dark");
+        else if (o->kind == O_SENSOR)
+            printf("  sensor (%d,%d) got %.2f -> %s\n", o->x, o->z, o->got[0] + o->got[1] + o->got[2], o->lit ? "ON" : "off");
         else if (o->movable)
-            printf("  %s (%d,%d) rot %d\n", o->kind == O_MIRROR ? "mirror" : o->kind == O_SPLIT ? "splitter" : o->kind == O_PRISM ? "prism" : "filter",
-                   o->x, o->z, o->rot);
+            printf("  %s (%d,%d) rot %d\n", o->kind == O_MIRROR ? "mirror" : o->kind == O_SPLIT ? "splitter" : o->kind == O_PRISM ? "prism" :
+                   o->kind == O_BOX ? "box" : "filter", o->x, o->z, o->rot);
     }
 }
