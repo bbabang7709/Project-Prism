@@ -48,6 +48,7 @@ typedef struct {
     int has_stand;            /* 풀이 확인용: 누군가 (stand_x, stand_z)에 서 있어야 풀린다 */
     int stand_x, stand_z;
     char file[64];            /* 읽어 온 파일 이름 (폴더 빼고). 기본 방이나 새 방은 빈 문자열 */
+    char note[512];           /* 파일 맨 위의 설명 주석 줄들 ('#' 포함, 줄마다 '\n'). 에디터가 저장할 때 그대로 다시 쓴다 */
 } Level;
 
 extern const char *KIND_NAME[];          /* O_* 번호로 찾는 물체 이름 */

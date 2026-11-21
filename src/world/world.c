@@ -98,7 +98,7 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     if (!text) return -1;
     memset(lv, 0, sizeof *lv);
     lv->sx = -1;
-    int rows = -1, rc = 0, lineno = 0, nobj = 0, nemit = 0, ncrystal = 0;
+    int rows = -1, rc = 0, lineno = 0, nobj = 0, nemit = 0, ncrystal = 0, seen_item = 0;
     struct { int x, z, r, line; } rots[MAXOBJ * 2];
     int nrots = 0;
     for (char *line = text, *next; line && rc == 0; line = next) {
@@ -120,7 +120,13 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
             memcpy(lv->map[rows++], line, RW + 1);
             continue;
         }
+        if (line[0] == '#' && rows < 0 && !seen_item) {   /* 맨 위 설명 주석은 기억해 둔다 (에디터가 다시 쓴다) */
+            size_t used = strlen(lv->note);
+            if (used + len + 2 < sizeof lv->note) { memcpy(lv->note + used, line, len); lv->note[used + len] = '\n'; lv->note[used + len + 1] = 0; }
+            continue;
+        }
         if (len == 0 || line[0] == '#') continue;
+        seen_item = 1;
         if (rows >= RD) { rc = fail(err, errlen, path, lineno, "지도 뒤에 내용이 더 있습니다"); break; }
         char word[16];
         int n = 0;
@@ -250,14 +256,19 @@ int world_save_level(const Level *lv, const char *file, char *err, size_t errlen
     if (world_check_level(lv, err, errlen) < 0) return -1;
     char text[4096];
     size_t n = 0;
-    n += (size_t)snprintf(text + n, sizeof text - n, "# PRISM 방 파일 (레벨 에디터로 저장)\nname %s\nstart %d %d %c\n",
+    /* 원래 파일의 설명 주석을 그대로 쓴다. 새 방이면 짧은 머리말 */
+    n += (size_t)snprintf(text + n, sizeof text - n, "%s", lv->note[0] ? lv->note : "# PRISM 방 파일 (레벨 에디터로 만듦)\n");
+    n += (size_t)snprintf(text + n, sizeof text - n, "name %s\nstart %d %d %c\n",
                           lv->name[0] ? lv->name : "이름 없는 방", lv->sx, lv->sz, lv->face ? lv->face : 'E');
     if (lv->coop) n += (size_t)snprintf(text + n, sizeof text - n, "coop %d %d\n", lv->stand_x, lv->stand_z);
     else if (lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "stand %d %d\n", lv->stand_x, lv->stand_z);
+    /* 거울·반투명 거울은 처음 각도가 0이어도 적는다 (손으로 쓴 방 파일들과 같은 모양, 퍼즐의 시작 상태가 잘 보이게) */
     for (int z = 0; z < RD; z++)
-        for (int x = 0; x < RW; x++)
-            if (lv->rot[z][x] && strchr(OBJ_CHARS, lv->map[z][x]))
+        for (int x = 0; x < RW; x++) {
+            char c = lv->map[z][x];
+            if (c == 'M' || c == 'S' || (lv->rot[z][x] && strchr(OBJ_CHARS, c)))
                 n += (size_t)snprintf(text + n, sizeof text - n, "rot %d %d %d\n", x, z, lv->rot[z][x]);
+        }
     n += (size_t)snprintf(text + n, sizeof text - n, "map\n");
     for (int z = 0; z < RD; z++) n += (size_t)snprintf(text + n, sizeof text - n, "%.*s\n", RW, lv->map[z]);
     if (n >= sizeof text) { snprintf(err, errlen, "방 파일이 너무 커요"); return -1; }
