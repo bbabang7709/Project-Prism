@@ -36,7 +36,23 @@ tests/out/baseline: tests/baseline.c
 	@mkdir -p $(dir $@)
 	$(CC) -Wall -Wextra -O2 -o $@ $<
 
-clean:
-	rm -rf build prism tests/out
+# 메모리 오류 검사용 빌드 (AddressSanitizer + UndefinedBehaviorSanitizer): prism-san
+#   배열 밖 접근, 해제한 메모리 사용, 메모리 누수, 정수 넘침 등을 실행 중에 잡아 바로 알려 준다
+SAN_FLAGS = -Wall -Wextra -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=undefined -pthread
+SAN_OBJS = $(SRCS:src/%.c=build-san/%.o)
 
-.PHONY: all test ref clean
+sanitize: prism-san
+
+prism-san: $(SAN_OBJS)
+	$(CC) $(SAN_FLAGS) -o $@ $^ $(LDLIBS)
+
+build-san/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(SAN_FLAGS) -c -o $@ $<
+
+-include $(SAN_OBJS:.o=.d)
+
+clean:
+	rm -rf build build-san prism prism-san tests/out
+
+.PHONY: all test ref sanitize clean

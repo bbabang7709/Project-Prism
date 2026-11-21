@@ -58,3 +58,5 @@ dkms.conf
 /prism
 /build/
 /tests/out/
+/prism-san
+/build-san/

@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -28,7 +29,10 @@ typedef struct {
     unsigned char in[8192];               /* 아직 처리하지 않은 받은 바이트 */
     int len;
     int ready;                            /* HELLO/WELCOME을 주고받았다 */
+    int64_t since;                        /* 접속한 시각 (ms) */
 } Conn;
+
+#define HELLO_WAIT_MS 5000                /* 호스트: 접속하고 이 시간 안에 HELLO가 없으면 끊는다 (자리 막기 방지) */
 
 static int s_mode = NET_OFF;
 static int s_listen = -1, s_port;
@@ -57,6 +61,14 @@ static unsigned get8(Rd *r) { if (r->i >= r->n) { r->bad = 1; return 0; } return
 static unsigned get16(Rd *r) { unsigned h = get8(r); return h << 8 | get8(r); }
 static uint32_t get32(Rd *r) { uint32_t h = get16(r); return h << 16 | get16(r); }
 static float getf(Rd *r) { uint32_t u = get32(r); float f; memcpy(&f, &u, 4); return f; }
+
+/* NaN·무한대가 아닌가. -ffast-math는 isfinite()를 항상 참으로 지워 버릴 수 있어서 지수 비트를 직접 본다 */
+static int finite_f(float f)
+{
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    return (u >> 23 & 0xFF) != 0xFF;
+}
 static void getbytes(Rd *r, void *p, int n) { for (int i = 0; i < n; i++) ((unsigned char *)p)[i] = (unsigned char)get8(r); }
 
 /* 한 메시지를 다 보낸다. 보내기 버퍼가 차 있으면 잠깐(최대 200ms) 기다린다 */
@@ -146,21 +158,28 @@ static int send_state(int fd, int to)
 
 /* ---------- 참가자가 받은 것 적용 ---------- */
 
+/* 받은 방은 임시로 읽어 검사한 뒤에만 쓴다. 호스트가 고장 났거나 악의적이어도
+ * (물체가 너무 많은 지도, 모르는 글자, 범위 밖 시작 칸) 참가자의 메모리를 망가뜨리지 않게 한다 */
 static void apply_level(Rd *r)
 {
     int idx = (int)get8(r), n = (int)get8(r);
     if (idx >= MAXLEVEL || n > MAXLEVEL || idx >= n) { r->bad = 1; return; }
-    Level *lv = &g_levels[idx];
-    memset(lv, 0, sizeof *lv);
-    getbytes(r, lv->name, sizeof lv->name);
-    lv->name[sizeof lv->name - 1] = 0;
-    for (int z = 0; z < RD; z++) { getbytes(r, lv->map[z], RW); lv->map[z][RW] = 0; }
-    for (int z = 0; z < RD; z++) getbytes(r, lv->rot[z], RW);
-    lv->sx = (int)get8(r);
-    lv->sz = (int)get8(r);
-    lv->face = (char)get8(r);
-    lv->coop = (int)get8(r);
+    Level lv;
+    memset(&lv, 0, sizeof lv);
+    getbytes(r, lv.name, sizeof lv.name);
+    lv.name[sizeof lv.name - 1] = 0;
+    for (int z = 0; z < RD; z++) { getbytes(r, lv.map[z], RW); lv.map[z][RW] = 0; }
+    for (int z = 0; z < RD; z++) getbytes(r, lv.rot[z], RW);
+    lv.sx = (int)get8(r);
+    lv.sz = (int)get8(r);
+    lv.face = (char)get8(r);
+    lv.coop = (int)get8(r);
     if (r->bad) return;
+    char err[160];
+    if (lv.sx >= RW || lv.sz >= RD || world_check_level(&lv, err, sizeof err) < 0) { r->bad = 1; return; }
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++) lv.rot[z][x] &= 7;
+    g_levels[idx] = lv;
     g_nlevels = n;
     g_cur_level = idx;
     load_level();
@@ -184,6 +203,11 @@ static void apply_state(Rd *r)
         p->tobj = (signed char)get8(r);
         p->tx = (signed char)get8(r);
         p->tz = (signed char)get8(r);
+        /* 받은 값의 범위를 확인한다: 물체 번호는 화면 표시에서 배열 번호로 쓰고, 좌표는 칸 번호로 바뀐다 */
+        if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(p->yaw) || !finite_f(p->pitch) ||
+            p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
+            p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
+            p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD) { r->bad = 1; return; }
     }
     int seq = (int)get16(r), ml = (int)get8(r);
     char msg[256];
@@ -194,7 +218,7 @@ static void apply_state(Rd *r)
     memset(g_objat, 0, sizeof g_objat);
     for (int i = 0; i < nobj; i++) {
         Obj *o = &g_obj[i];
-        o->x = (int)get8(r); o->z = (int)get8(r); o->rot = (int)get8(r); o->held = (int)get8(r);
+        o->x = (int)get8(r); o->z = (int)get8(r); o->rot = (int)get8(r) & 7; o->held = (int)get8(r) != 0;
         if (o->x >= RW || o->z >= RD) { r->bad = 1; return; }
         if (!o->held) g_objat[o->z][o->x] = i + 1;
     }
@@ -249,7 +273,7 @@ static void dispatch(int type, Rd *r)
             if (r->bad) return;
             g_pl[1].keys = keys;
             g_pl[1].fp = fp != 0;
-            g_pl[1].walk_yaw = walk;
+            g_pl[1].walk_yaw = finite_f(walk) ? fmodf(walk, 2 * PI) : 0;   /* NaN·무한대면 참가자 위치가 망가진다 */
         } else if (type == M_ACTION) {
             int act = (int)get8(r);
             if (!r->bad) game_action(1, act);
@@ -350,7 +374,7 @@ static void accept_peer(void)
         close(fd);
         return;
     }
-    s_peer = (Conn){ .fd = fd };
+    s_peer = (Conn){ .fd = fd, .since = now_ms() };
 }
 
 /* ---------- 참가자 ---------- */
@@ -423,6 +447,11 @@ void net_handle(const struct pollfd *pf, int n)
 
 void net_after_tick(void)
 {
+    if (s_mode == NET_HOST && s_peer.fd >= 0 && !s_peer.ready && now_ms() - s_peer.since > HELLO_WAIT_MS) {
+        send_bye(s_peer.fd, "HELLO가 오지 않았어요");     /* 접속만 하고 말이 없는 연결이 2번 자리를 막지 않게 */
+        drop_peer("");
+        return;
+    }
     if (s_peer.fd < 0 || !s_peer.ready) return;
     if (s_mode == NET_HOST) {
         if (g_cur_level != s_sent_level) {

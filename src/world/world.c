@@ -101,7 +101,9 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     int rows = -1, rc = 0, lineno = 0, nobj = 0, nemit = 0, ncrystal = 0, seen_item = 0;
     struct { int x, z, r, line; } rots[MAXOBJ * 2];
     int nrots = 0;
-    for (char *line = text, *next; line && rc == 0; line = next) {
+    char *start = text;
+    if (!strncmp(start, "\xEF\xBB\xBF", 3)) start += 3;   /* UTF-8 BOM (Windows 메모장이 붙인다) 건너뛰기. 짧은 파일에서도 끝을 넘지 않게 strncmp */
+    for (char *line = start, *next; line && rc == 0; line = next) {
         next = strchr(line, '\n');
         if (next) *next++ = 0;
         lineno++;
