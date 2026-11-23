@@ -4,6 +4,7 @@
  * 빛은 물체가 바뀌거나 몸이 움직였을 때만 다시 계산한다 (game_simulate).
  * 모든 플레이어의 몸이 빛을 가린다.
  * 들기·놓기·돌리기는 하기 전 상태를 기억해 두어 되돌릴 수 있다 (ACT_UNDO, 방마다 64번까지).
+ * 힌트(ACT_HINT)는 처음 상태에서 푼 답과 지금 상태를 비교해 다음에 할 일 하나를 알려 준다.
  *
  * 혼자 할 때와 호스트는 이 모듈이 모든 플레이어를 움직인다(game_tick).
  * 참가자(클라이언트)는 호스트가 보낸 상태를 받아 그리기만 하고, 키와 동작은 호스트로 보낸다.
@@ -19,7 +20,7 @@
 enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_LEFT = 16, K_RIGHT = 32, K_UP = 64, K_DOWN = 128 };
 
 /* 조작 (네트워크로 보내는 단위이기도 하다) */
-enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO };
+enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO, ACT_HINT };
 
 typedef struct {
     int on;                             /* 이 자리에 플레이어가 있다 */
@@ -31,6 +32,7 @@ typedef struct {
     int tobj, tx, tz;                   /* 겨누는 물체, 놓을 수 있는 칸 (-1이면 없음) */
     char msg[160];                      /* 이 사람에게 보여 줄 알림 */
     int msg_t, msg_seq;                 /* 알림이 남은 틱 수, 알림 번호 (새 알림마다 1씩) */
+    int hint_t, hint_obj, hint_x, hint_z;   /* 힌트: 남은 틱 수, 표시할 물체와 칸 (-1이면 없음) */
 } Player;
 
 extern Player g_pl[MAXPLAYER];

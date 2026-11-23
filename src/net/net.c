@@ -21,7 +21,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 4                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기 */
+#define VERSION 5                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트 */
 #define MAXMSG 2048
 
 typedef struct {
@@ -142,6 +142,10 @@ static int send_state(int fd, int to)
         put8(&w, (unsigned char)(signed char)p->tobj);
         put8(&w, (unsigned char)(signed char)p->tx);
         put8(&w, (unsigned char)(signed char)p->tz);
+        put8(&w, (unsigned)(p->hint_t > 255 ? 255 : p->hint_t));
+        put8(&w, (unsigned char)(signed char)p->hint_obj);
+        put8(&w, (unsigned char)(signed char)p->hint_x);
+        put8(&w, (unsigned char)(signed char)p->hint_z);
     }
     const Player *p = &g_pl[to];
     int ml = (int)strlen(p->msg);
@@ -203,11 +207,16 @@ static void apply_state(Rd *r)
         p->tobj = (signed char)get8(r);
         p->tx = (signed char)get8(r);
         p->tz = (signed char)get8(r);
+        p->hint_t = (int)get8(r);
+        p->hint_obj = (signed char)get8(r);
+        p->hint_x = (signed char)get8(r);
+        p->hint_z = (signed char)get8(r);
         /* 받은 값의 범위를 확인한다: 물체 번호는 화면 표시에서 배열 번호로 쓰고, 좌표는 칸 번호로 바뀐다 */
         if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(p->yaw) || !finite_f(p->pitch) ||
             p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
             p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
-            p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD) { r->bad = 1; return; }
+            p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD ||
+            p->hint_obj < -1 || p->hint_obj >= g_nobj || p->hint_x < -1 || p->hint_x >= RW || p->hint_z < -1 || p->hint_z >= RD) { r->bad = 1; return; }
     }
     int seq = (int)get16(r), ml = (int)get8(r);
     char msg[256];
@@ -225,7 +234,7 @@ static void apply_state(Rd *r)
     Player *me = &g_pl[g_me];
     if (seq != s_last_seq) {                            /* 새 알림 */
         snprintf(me->msg, sizeof me->msg, "%.159s", msg);
-        me->msg_t = 90;
+        me->msg_t = me->hint_t > 90 ? me->hint_t : 90;   /* 힌트 알림은 힌트 표시만큼 오래 */
         s_last_seq = seq;
     }
     game_simulate();                                    /* 받은 물체 상태로 빛줄기와 수정을 다시 계산 */

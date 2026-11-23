@@ -206,6 +206,7 @@ static void on_press(int vk)
     else if (vk == 'E') do_action(ACT_ROT_RIGHT);
     else if (vk == 'R') do_action(ACT_RESET);
     else if (vk == 'Z') do_action(ACT_UNDO);
+    else if (vk == 'I') do_action(ACT_HINT);
     else game_view_key(vk);
 }
 

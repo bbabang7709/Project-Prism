@@ -183,6 +183,16 @@ int game_solve(void)
 
 /* ---------- 알림 ---------- */
 
+/* 물체 이름 뒤에 붙일 조사: 마지막 글자에 받침이 있으면 a("을", "은", "이"), 없으면 b("를", "는", "가") */
+static const char *josa(int kind, const char *a, const char *b)
+{
+    const unsigned char *s = (const unsigned char *)KIND_NAME[kind];
+    size_t n = strlen((const char *)s);
+    if (n < 3) return a;
+    unsigned c = (unsigned)(s[n - 3] & 0x0F) << 12 | (unsigned)(s[n - 2] & 0x3F) << 6 | (unsigned)(s[n - 1] & 0x3F);
+    return c >= 0xAC00 && c <= 0xD7A3 && (c - 0xAC00) % 28 == 0 ? b : a;
+}
+
 static void vmessage(Player *p, const char *fmt, va_list ap)
 {
     vsnprintf(p->msg, sizeof p->msg, fmt, ap);
@@ -205,6 +215,7 @@ void game_message(int p, const char *fmt, ...)
 
 static void after_change(void)
 {
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].hint_t = 0;   /* 상태가 바뀌면 힌트는 맞지 않을 수 있다 */
     int was = g_solved;
     game_simulate();
     g_moves++;
@@ -236,11 +247,12 @@ static void undo(int p)
         if (u->held[i] || (u->x[i] == g_obj[i].x && u->z[i] == g_obj[i].z && !g_obj[i].held)) continue;
         for (int k = 0; k < MAXPLAYER; k++)
             if (g_pl[k].on && body_on_cell(&g_pl[k], u->x[i], u->z[i])) {
-                game_message(p, "%s이(가) 돌아갈 자리에 누가 서 있어요. 비켜 서면 되돌릴 수 있어요", KIND_NAME[g_obj[i].kind]);
+                game_message(p, "%s%s 돌아갈 자리에 누가 서 있어요. 비켜 서면 되돌릴 수 있어요", KIND_NAME[g_obj[i].kind], josa(g_obj[i].kind, "이", "가"));
                 return;
             }
     }
     s_nundo--;
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].hint_t = 0;
     memset(g_objat, 0, sizeof g_objat);
     for (int i = 0; i < g_nobj; i++) {
         Obj *o = &g_obj[i];
@@ -330,7 +342,7 @@ static void take_or_place(int p)
         Obj *o = &g_obj[pl->carry];
         o->x = pl->tx; o->z = pl->tz; o->held = 0;
         g_objat[pl->tz][pl->tx] = pl->carry + 1;
-        game_message(p, "%s을(를) 내려놓았어요", KIND_NAME[o->kind]);
+        game_message(p, "%s%s 내려놓았어요", KIND_NAME[o->kind], josa(o->kind, "을", "를"));
         pl->carry = -1;
         after_change();
         for (int i = 0; i < MAXPLAYER; i++) if (g_pl[i].on) game_find_target(i);
@@ -338,12 +350,12 @@ static void take_or_place(int p)
     }
     if (pl->tobj < 0) { game_message(p, "물체를 겨누고 F를 누르면 들 수 있어요"); return; }
     Obj *o = &g_obj[pl->tobj];
-    if (!o->movable) { game_message(p, "%s은(는) 고정되어 있어요", KIND_NAME[o->kind]); return; }
+    if (!o->movable) { game_message(p, "%s%s 고정되어 있어요", KIND_NAME[o->kind], josa(o->kind, "은", "는")); return; }
     push_undo();
     g_objat[o->z][o->x] = 0;
     o->held = 1;
     pl->carry = pl->tobj;
-    game_message(p, "%s을(를) 들었어요. 빈 바닥을 겨누고 F로 내려놓으세요", KIND_NAME[o->kind]);
+    game_message(p, "%s%s 들었어요. 빈 바닥을 겨누고 F로 내려놓으세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"));
     after_change();
     for (int i = 0; i < MAXPLAYER; i++) if (g_pl[i].on) game_find_target(i);
 }
@@ -353,7 +365,7 @@ static void rotate(int p, int d)
     Player *pl = &g_pl[p];
     Obj *o = pl->tobj >= 0 ? &g_obj[pl->tobj] : pl->carry >= 0 ? &g_obj[pl->carry] : NULL;
     if (!o) { game_message(p, "돌릴 거울을 겨누세요"); return; }
-    if (o->kind != O_MIRROR && o->kind != O_SPLIT) { game_message(p, "%s은(는) 돌릴 수 없어요", KIND_NAME[o->kind]); return; }
+    if (o->kind != O_MIRROR && o->kind != O_SPLIT) { game_message(p, "%s%s 돌릴 수 없어요", KIND_NAME[o->kind], josa(o->kind, "은", "는")); return; }
     push_undo();
     o->rot = (o->rot + d + 8) % 8;
     after_change();
@@ -363,6 +375,7 @@ static void rotate(int p, int d)
 static void restart_room(void)
 {
     s_nundo = 0;
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].hint_t = 0;
     load_level();
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) place_player(i);
@@ -387,6 +400,80 @@ static void through_door(void)
     }
 }
 
+/* ---------- 힌트 ---------- */
+
+static void set_hint(int p, int obj, int x, int z, const char *fmt, ...) __attribute__((format(printf, 5, 6)));
+static void set_hint(int p, int obj, int x, int z, const char *fmt, ...)
+{
+    Player *pl = &g_pl[p];
+    va_list ap;
+    va_start(ap, fmt);
+    vmessage(pl, fmt, ap);
+    va_end(ap);
+    pl->msg_t = pl->hint_t = 240;                         /* 8초 */
+    pl->hint_obj = obj; pl->hint_x = x; pl->hint_z = z;
+}
+
+/* 처음 상태에서 푼 답(방 파일의 stand·move 포함)을 구해 지금 상태와 비교하고, 다음에 할 일 하나를 알려 준다.
+ * 풀이를 찾는 동안 바꾼 월드와 플레이어는 모두 되돌려 놓는다 */
+static void hint(int p)
+{
+    static Obj obj[MAXOBJ];
+    static int objat[RD][RW];
+    static uint8_t blk[RH][RD][RW];
+    static Player pl[MAXPLAYER];
+    int nobj = g_nobj;
+    memcpy(obj, g_obj, sizeof obj);
+    memcpy(objat, g_objat, sizeof objat);
+    memcpy(blk, g_blk, sizeof blk);
+    memcpy(pl, g_pl, sizeof pl);
+
+    load_level();                                         /* 처음 상태에서 사람 없이 (stand가 있으면 그 칸에만) 푼다 */
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].on = 0;
+    game_solve_setup();
+    int ok = game_solve(), sx[MAXOBJ], sz[MAXOBJ], srot[MAXOBJ];
+    for (int i = 0; i < g_nobj; i++) { sx[i] = g_obj[i].x; sz[i] = g_obj[i].z; srot[i] = g_obj[i].rot; }
+
+    g_nobj = nobj;
+    memcpy(g_obj, obj, sizeof obj);
+    memcpy(g_objat, objat, sizeof objat);
+    memcpy(g_blk, blk, sizeof blk);
+    memcpy(g_pl, pl, sizeof pl);
+    game_simulate();
+
+    const Level *lv = &g_levels[g_cur_level];
+    Player *me = &g_pl[p];
+    if (g_solved) { set_hint(p, -1, -1, -1, "문이 열려 있어요. 문으로 걸어 나가세요"); return; }
+    if (!ok) { set_hint(p, -1, -1, -1, "이 방은 힌트를 찾지 못했어요"); return; }
+    if (me->carry >= 0) {                                 /* 든 물체를 놓을 자리 */
+        int c = me->carry;
+        set_hint(p, -1, sx[c], sz[c], "들고 있는 %s%s 노란 칸에 내려놓으세요", KIND_NAME[g_obj[c].kind], josa(g_obj[c].kind, "을", "를"));
+        return;
+    }
+    for (int i = 0; i < g_nobj; i++) {                    /* 자리가 다른 물체 (다른 사람이 든 것은 빼고) */
+        const Obj *o = &g_obj[i];
+        if (o->held || (o->x == sx[i] && o->z == sz[i])) continue;
+        set_hint(p, i, sx[i], sz[i], "테두리 친 %s%s 노란 칸으로 옮기세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"));
+        return;
+    }
+    for (int i = 0; i < g_nobj; i++) {                    /* 각도가 다른 거울: 가까운 쪽으로 돌리라고 한다 (8단계가 180도) */
+        const Obj *o = &g_obj[i];
+        if (o->held || (o->kind != O_MIRROR && o->kind != O_SPLIT)) continue;
+        int d = ((srot[i] - o->rot) % 8 + 8) % 8;
+        if (!d) continue;
+        if (d > 4) set_hint(p, i, -1, -1, "테두리 친 %s%s Q로 %d번 돌리세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"), 8 - d);
+        else set_hint(p, i, -1, -1, "테두리 친 %s%s E로 %d번 돌리세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"), d);
+        return;
+    }
+    int taken = lv->has_stand && g_objat[lv->stand_z][lv->stand_x];
+    for (int i = 0; i < MAXPLAYER && lv->has_stand; i++) taken |= g_pl[i].on && body_on_cell(&g_pl[i], lv->stand_x, lv->stand_z);
+    if (lv->has_stand && !taken) {                        /* 누군가 서서 빛을 막거나 발판을 눌러야 하는 방 */
+        set_hint(p, -1, lv->stand_x, lv->stand_z, lv->coop ? "한 사람이 노란 칸에 서 있어야 해요" : "노란 칸에 서 있거나 물체를 올려 두세요");
+        return;
+    }
+    set_hint(p, -1, -1, -1, "물체는 제자리예요. 빛을 가리고 있지 않은지 확인해 보세요");
+}
+
 void game_action(int p, int act)
 {
     if (p < 0 || p >= MAXPLAYER || !g_pl[p].on) return;
@@ -396,6 +483,7 @@ void game_action(int p, int act)
     case ACT_ROT_RIGHT: rotate(p, 1); break;
     case ACT_RESET: restart_room(); game_message(-1, "처음 상태로 되돌렸어요"); break;
     case ACT_UNDO: undo(p); break;
+    case ACT_HINT: hint(p); break;
     }
 }
 
@@ -498,6 +586,8 @@ void game_tick(float dt)
     cam_yaw += (cam_yaw_target - cam_yaw) * 0.25f;        /* 카메라는 부드럽게 돈다 */
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].msg_t > 0) g_pl[i].msg_t--;
+    for (int i = 0; i < MAXPLAYER; i++)
+        if (g_pl[i].hint_t > 0) g_pl[i].hint_t--;
     if (!g_cleared) g_ticks++;
 }
 
@@ -505,6 +595,7 @@ void game_local_tick(void)
 {
     cam_yaw += (cam_yaw_target - cam_yaw) * 0.25f;
     if (g_pl[g_me].msg_t > 0) g_pl[g_me].msg_t--;
+    if (g_pl[g_me].hint_t > 0) g_pl[g_me].hint_t--;
 }
 
 /* ---------- 렌더러와 시험용 ---------- */
@@ -516,7 +607,12 @@ void game_view(View *v)
     int n = 0;
     for (int i = 0; i < MAXPLAYER; i++)                   /* 1인칭에서는 내 몸은 그리지 않는다 */
         if (g_pl[i].on && !(i == g_me && me->fp)) bodies[n++] = (Body){ g_pl[i].x, g_pl[i].z, i };
-    *v = (View){ me->fp, me->x, me->z, me->yaw, me->pitch, cam_yaw, cam_pitch, cam_dist, me->tx, me->tz, me->tobj,
+    int tx = me->tx, tz = me->tz, sel = me->tobj;
+    if (me->hint_t > 0 && (me->hint_t / 10) % 3 != 0) {   /* 힌트: 물체 테두리와 칸 표시를 깜빡이며 보여 준다 */
+        if (me->hint_obj >= 0) sel = me->hint_obj;
+        if (me->hint_x >= 0) { tx = me->hint_x; tz = me->hint_z; }
+    }
+    *v = (View){ me->fp, me->x, me->z, me->yaw, me->pitch, cam_yaw, cam_pitch, cam_dist, tx, tz, sel,
                  g_seg, g_nseg, bodies, n, 1 };
 }
 
