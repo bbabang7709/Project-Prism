@@ -11,12 +11,13 @@
 #include "platform/terminal.h"
 #include "renderer/renderer.h"
 
-/* 놓을 수 있는 것: 방 파일의 지도 글자와 같다. '@'만 지도 글자가 아니라 시작 위치 */
+/* 놓을 수 있는 것: 방 파일의 지도 글자와 같다. '@'와 '2'만 지도 글자가 아니라 시작 위치, 2번 플레이어 시작 위치 */
 static const struct { char c; const char *name; } TOOLS[] = {
     { '#', "벽" }, { '|', "기둥" }, { 'g', "유리 블록" }, { 'D', "문" }, { '_', "발판" }, { '=', "창살" },
     { 'E', "광원" }, { 'P', "프리즘" }, { 'M', "거울" }, { 'S', "반투명 거울" }, { 'b', "파랑 필터" }, { 'r', "빨강 필터" },
     { 'R', "빨강 수정" }, { 'G', "초록 수정" }, { 'B', "파랑 수정" }, { 'Y', "노랑 수정" },
-    { 'O', "감지기" }, { 'T', "순간이동 고리" }, { 'K', "상자" }, { '@', "시작 위치" },
+    { 'O', "감지기" }, { 'T', "순간이동 고리" }, { 'K', "상자" }, { 'h', "전달 창구" },
+    { '@', "시작 위치" }, { '2', "2번 시작 위치 (나뉜 2인용 방)" },
 };
 #define NTOOL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
 static const char OBJ_CHARS[] = "EPMSbrRGBYOTK";
@@ -128,8 +129,25 @@ static void place(void)
         changed();
         return;
     }
+    if (c == '2') {                                       /* 같은 칸에 다시 놓으면 없앤다 */
+        if (s_lv.has_start2 && s_lv.sx2 == s_cx && s_lv.sz2 == s_cz) {
+            s_lv.has_start2 = 0;
+            msg("2번 시작 위치를 없앴어요 (2번 플레이어는 1번 옆에서 시작)");
+        } else if (*cell != '.' || (s_cx == s_lv.sx && s_cz == s_lv.sz)) {
+            msg("2번 시작 위치는 1번 시작 위치가 아닌 빈 바닥에만 둘 수 있어요");
+            return;
+        } else {
+            s_lv.has_start2 = 1; s_lv.sx2 = s_cx; s_lv.sz2 = s_cz;
+            if (!s_lv.face2) s_lv.face2 = 'W';
+            s_lv.coop = 1;                                /* 2번 시작 위치가 있으면 2인용 방 */
+            msg("2번 시작 위치를 (%d, %d)로 옮겼어요. 2인용 방이 됩니다", s_cx, s_cz);
+        }
+        changed();
+        return;
+    }
     if (border && c != '#' && c != 'D') { msg("테두리에는 벽과 문만 놓을 수 있어요"); return; }
     if (s_cx == s_lv.sx && s_cz == s_lv.sz) { msg("시작 위치예요. 시작 위치를 먼저 옮기세요"); return; }
+    if (s_lv.has_start2 && s_cx == s_lv.sx2 && s_cz == s_lv.sz2) { msg("2번 시작 위치예요. 먼저 옮기세요"); return; }
     if (*cell == c) return;
     if (c == 'T') {                                       /* 순간이동 고리는 한 쌍까지 */
         int n = 0;
@@ -143,6 +161,7 @@ static void place(void)
     }
     *cell = c;
     s_lv.rot[s_cz][s_cx] = 0;
+    s_lv.chan[s_cz][s_cx] = 0;
     msg("(%d, %d)에 %s", s_cx, s_cz, TOOLS[s_tool].name);
     changed();
 }
@@ -154,6 +173,7 @@ static void erase(void)
     if (s_lv.map[s_cz][s_cx] == want) return;
     s_lv.map[s_cz][s_cx] = want;
     s_lv.rot[s_cz][s_cx] = 0;
+    s_lv.chan[s_cz][s_cx] = 0;
     msg("(%d, %d)를 %s", s_cx, s_cz, border ? "벽으로 되돌렸어요" : "지웠어요");
     changed();
 }
@@ -164,6 +184,17 @@ static void rotate(int d)
     if (c != 'M' && c != 'S' && c != 'E') { msg("돌릴 수 있는 것은 거울, 반투명 거울, 광원이에요"); return; }
     s_lv.rot[s_cz][s_cx] = (signed char)((s_lv.rot[s_cz][s_cx] + d + 8) % 8);
     msg("%s 각도 %d (%s)", cell_name(c), s_lv.rot[s_cz][s_cx], c == 'E' ? "45도 단위" : "22.5도 단위");
+    changed();
+}
+
+/* 발판·창살·감지기의 연결 번호를 0→1→2→3→0으로 바꾼다. 같은 번호끼리만 이어진다 */
+static void cycle_link(void)
+{
+    char c = s_lv.map[s_cz][s_cx];
+    if (!strchr("_=O", c) || !c) { msg("연결 번호는 발판, 창살, 감지기에만 붙일 수 있어요"); return; }
+    s_lv.chan[s_cz][s_cx] = (signed char)((s_lv.chan[s_cz][s_cx] + 1) % 4);
+    static const char *COL[4] = { "기본", "주황", "분홍", "하늘" };
+    msg("%s 연결 번호 %d (%s). 창살은 같은 번호의 발판·감지기가 모두 켜져야 열려요", cell_name(c), s_lv.chan[s_cz][s_cx], COL[(int)s_lv.chan[s_cz][s_cx]]);
     changed();
 }
 
@@ -240,6 +271,7 @@ int editor_key(int vk)
         msg("새 이름을 입력하고 Enter (한글 가능, ESC 취소)");
         break;
     case 'V': verify(); break;
+    case 'L': cycle_link(); break;
     case 'S': save(); break;
     case 'T': {
         char err[160];
@@ -293,9 +325,10 @@ void editor_draw(int frame)
     v.tx = s_cx; v.tz = s_cz;                             /* 커서 칸 표시 */
     v.sel_obj = g_objat[s_cz][s_cx] - 1;                  /* 커서 칸의 물체에는 노란 테두리 */
     v.seg = g_seg; v.nseg = g_nseg;
-    static Body start;                                    /* 시작 위치에 사람을 세워 보여 준다 */
-    start = (Body){ (float)s_lv.sx + 0.5f, (float)s_lv.sz + 0.5f, 0 };
-    v.bodies = &start; v.nbody = 1;
+    static Body start[2];                                 /* 시작 위치에 사람을 세워 보여 준다 (2번 시작 위치는 2번 색) */
+    start[0] = (Body){ (float)s_lv.sx + 0.5f, (float)s_lv.sz + 0.5f, 0 };
+    start[1] = (Body){ (float)s_lv.sx2 + 0.5f, (float)s_lv.sz2 + 0.5f, 1 };
+    v.bodies = start; v.nbody = s_lv.has_start2 ? 2 : 1;
     renderer_draw(&v, W, H, frame);
     hud_blit(256);
 
@@ -312,7 +345,11 @@ void editor_draw(int frame)
     x += term_text(1 + x, 1, 0x101010, 0xFFD27A, " %s ", TOOLS[s_tool].name);
     term_text(1 + x, 1, 0x9AA0B0, 0x161822, " ▶ %s", TOOLS[n].name);
     char c = s_lv.map[s_cz][s_cx], info[96];
-    snprintf(info, sizeof info, "커서 (%d, %d): %s%s", s_cx, s_cz, cell_name(c), s_cx == s_lv.sx && s_cz == s_lv.sz ? " · 시작 위치" : "");
+    char link[24] = "";
+    if (strchr("_=O", c) && c && s_lv.chan[s_cz][s_cx]) snprintf(link, sizeof link, " · 연결 %d", s_lv.chan[s_cz][s_cx]);
+    snprintf(info, sizeof info, "커서 (%d, %d): %s%s%s%s", s_cx, s_cz, cell_name(c), link,
+             s_cx == s_lv.sx && s_cz == s_lv.sz ? " · 시작 위치" : "",
+             s_lv.has_start2 && s_cx == s_lv.sx2 && s_cz == s_lv.sz2 ? " · 2번 시작 위치" : "");
     if (c == 'M' || c == 'S' || c == 'E') snprintf(info + strlen(info), sizeof info - strlen(info), " · 각도 %d", s_lv.rot[s_cz][s_cx]);
     term_text(g_cols - 1 - term_str_w(info), 1, 0xE8ECF4, 0x161822, "%s", info);
 
@@ -326,6 +363,6 @@ void editor_draw(int frame)
     if (s_msg[0]) term_text(g_cols / 2 - term_str_w(s_msg) / 2 - 1, g_rows - 3, 0xFFE6A0, 0x22252F, " %s ", s_msg);
     term_bar(g_rows - 1, 0x161822);
     term_text(1, g_rows - 1, 0x9AA0B0, 0x161822,
-              "방향키 커서  Tab/[ ] 도구  Enter/F 놓기  X 지우기  Q/E 돌리기  ,/. 카메라  V 풀이확인  T 시험  S 저장  N 이름  ESC 나가기");
+              "방향키 커서  Tab/[ ] 도구  Enter/F 놓기  X 지우기  Q/E 돌리기  L 연결  ,/. 카메라  V 풀이확인  T 시험  S 저장  N 이름  ESC 나가기");
     term_present();
 }

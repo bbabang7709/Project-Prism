@@ -21,7 +21,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 5                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트 */
+#define VERSION 6                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치) */
 #define MAXMSG 2048
 
 typedef struct {
@@ -122,6 +122,11 @@ static int send_level(int fd)
     put8(&w, (unsigned)lv->sz);
     put8(&w, (unsigned char)lv->face);
     put8(&w, (unsigned)lv->coop);
+    for (int z = 0; z < RD; z++) putbytes(&w, lv->chan[z], RW);
+    put8(&w, (unsigned)lv->has_start2);
+    put8(&w, (unsigned)lv->sx2);
+    put8(&w, (unsigned)lv->sz2);
+    put8(&w, (unsigned char)lv->face2);
     return send_msg(fd, M_LEVEL, &w);
 }
 
@@ -178,9 +183,15 @@ static void apply_level(Rd *r)
     lv.sz = (int)get8(r);
     lv.face = (char)get8(r);
     lv.coop = (int)get8(r);
+    for (int z = 0; z < RD; z++) getbytes(r, lv.chan[z], RW);
+    lv.has_start2 = (int)get8(r) != 0;
+    lv.sx2 = (int)get8(r);
+    lv.sz2 = (int)get8(r);
+    lv.face2 = (char)get8(r);
     if (r->bad) return;
     char err[160];
-    if (lv.sx >= RW || lv.sz >= RD || world_check_level(&lv, err, sizeof err) < 0) { r->bad = 1; return; }
+    if (lv.sx >= RW || lv.sz >= RD || (lv.has_start2 && (lv.sx2 >= RW || lv.sz2 >= RD || !strchr("ESWN", lv.face2) || !lv.face2)) ||
+        world_check_level(&lv, err, sizeof err) < 0) { r->bad = 1; return; }
     for (int z = 0; z < RD; z++)
         for (int x = 0; x < RW; x++) lv.rot[z][x] &= 7;
     g_levels[idx] = lv;

@@ -337,19 +337,34 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                     ar = mixf(0.42f, 0.9f, c); ag = mixf(0.30f, 0.75f, c); ab = mixf(0.18f, 0.35f, c);
                 } else if (b == B_PLATE || b == B_PLATE_ON) {                    /* 발판: 구리색 판, 눌리면 초록 */
                     float c = axis != 1 ? 1 : band(edge, -0.12f, 0.12f, fws);    /* 테두리 */
+                    int ch = g_levels[g_cur_level].chan[z][x] & 3;
                     if (b == B_PLATE_ON) { ar = 0.30f; ag = 0.95f; ab = 0.45f; }
                     else { ar = 0.80f; ag = 0.52f; ab = 0.24f; }
-                    ar = mixf(ar, 0.22f, c); ag = mixf(ag, 0.22f, c); ab = mixf(ab, 0.27f, c);
+                    if (ch) {                                                    /* 연결 번호가 있으면 판과 테두리를 그 색으로 */
+                        const float *cc = CHAN_COL[ch];
+                        if (b == B_PLATE) { ar = cc[0] * 0.85f; ag = cc[1] * 0.85f; ab = cc[2] * 0.85f; }
+                        ar = mixf(ar, cc[0] * 0.45f, c); ag = mixf(ag, cc[1] * 0.45f, c); ab = mixf(ab, cc[2] * 0.45f, c);
+                    } else {
+                        ar = mixf(ar, 0.22f, c); ag = mixf(ag, 0.22f, c); ab = mixf(ab, 0.27f, c);
+                    }
                     if (x == F->tx && z == F->tz && axis == 1) hl = band(edge, 0, 0.09f, fws);
                 } else if (b == B_GATE) {                                        /* 창살: 세로 막대 */
+                    int ch = g_levels[g_cur_level].chan[z][x] & 3;
                     ar = 0.34f; ag = 0.50f; ab = 0.66f;
+                    if (ch) { ar = CHAN_COL[ch][0] * 0.6f; ag = CHAN_COL[ch][1] * 0.6f; ab = CHAN_COL[ch][2] * 0.6f; }
                     if (ny == 0) {
                         float f = fmodf(u * 4 + 0.25f, 1);
                         float c = band(fminf(fabsf(f - 0.25f), fminf(fabsf(f - 1.25f), fabsf(f + 0.75f))) / 4, -0.0625f, 0.0625f, fws);
                         ar = mixf(ar, 0.12f, c); ag = mixf(ag, 0.17f, c); ab = mixf(ab, 0.24f, c);
                         float h = band(fabsf(v - 0.5f), -0.05f, 0.05f, fws);
-                        ar = mixf(ar, 0.55f, h); ag = mixf(ag, 0.72f, h); ab = mixf(ab, 0.90f, h);
+                        if (ch) { ar = mixf(ar, CHAN_COL[ch][0], h); ag = mixf(ag, CHAN_COL[ch][1], h); ab = mixf(ab, CHAN_COL[ch][2], h); }
+                        else { ar = mixf(ar, 0.55f, h); ag = mixf(ag, 0.72f, h); ab = mixf(ab, 0.90f, h); }
                     }
+                } else if (b == B_HATCH) {                                       /* 전달 창구: 나무 판에 노란 줄무늬 테두리 */
+                    float c = axis != 1 ? 1 : band(edge, -0.10f, 0.10f, fws);
+                    float st = band(fmodf(hx + hz + 8, 0.5f), 0, 0.25f, fws);     /* 테두리의 빗금 */
+                    ar = mixf(0.55f, mixf(0.20f, 0.95f, st), c); ag = mixf(0.38f, mixf(0.18f, 0.78f, st), c); ab = mixf(0.22f, mixf(0.15f, 0.20f, st), c);
+                    if (x == F->tx && z == F->tz && axis == 1) hl = band(edge, 0, 0.09f, fws);
                 } else {
                     float k = ny > 0 ? 1.15f : 1.0f;
                     if (ny == 0) {                                               /* 벽돌 줄눈 (가로 0.5칸, 세로 1칸마다, 줄마다 반 칸 어긋남) */
@@ -445,8 +460,8 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                         spec = 0.6f;
                         break;
                     }
-                    case M_EYE:                                                  /* 감지기 렌즈: 꺼지면 어두운 유리, 켜지면 밝은 청록 */
-                        if (o->lit) { ar = 0.55f; ag = 1.0f; ab = 0.85f; er = 120; eg = 235; eb = 200; }
+                    case M_EYE:                                                  /* 감지기 렌즈: 꺼지면 어두운 유리, 켜지면 연결 번호의 색으로 밝게 */
+                        if (o->lit) { ar = o->col[0] * 0.6f + 0.3f; ag = o->col[1] * 0.6f + 0.3f; ab = o->col[2] * 0.6f + 0.3f; er = o->col[0] * 235; eg = o->col[1] * 235; eb = o->col[2] * 235; }
                         else { ar = 0.10f; ag = 0.20f; ab = 0.22f; er = 10; eg = 28; eb = 30; }
                         spec = 0.9f;
                         break;

@@ -68,30 +68,32 @@ static unsigned sensor_mask(int *count)
 }
 
 /* 발판·감지기와 창살: 발판은 그 칸에 서 있는 사람이나 놓인 물체가 누른다. 감지기는 빛을 받으면 켜진다.
- * 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 창살이 열린다. 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
+ * 창살은 연결 번호(link, 0~3)가 같은 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 열린다.
+ * 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
 static void update_plates(void)
 {
     const Level *lv = &g_levels[g_cur_level];
-    int plates = 0, all = 1, nsensor;
-    unsigned lit = sensor_mask(&nsensor);
-    if (nsensor) {
-        plates += nsensor;
-        all = __builtin_popcount(lit) == nsensor;
-    }
+    int plates[4] = { 0 }, all[4] = { 1, 1, 1, 1 };
+    for (int i = 0; i < g_nobj; i++)                      /* 감지기 (지난 빛 계산 결과) */
+        if (g_obj[i].kind == O_SENSOR) {
+            int c = lv->chan[g_obj[i].z][g_obj[i].x] & 3;
+            plates[c]++;
+            all[c] &= g_obj[i].lit;
+        }
     for (int z = 0; z < RD; z++)
         for (int x = 0; x < RW; x++) {
             if (lv->map[z][x] != '_') continue;
-            int pressed = g_objat[z][x] != 0;
+            int pressed = g_objat[z][x] != 0, c = lv->chan[z][x] & 3;
             for (int i = 0; i < MAXPLAYER && !pressed; i++)
                 pressed = g_pl[i].on && (int)floorf(g_pl[i].x) == x && (int)floorf(g_pl[i].z) == z;
             world_set_plate(x, z, pressed);
-            plates++;
-            all &= pressed;
+            plates[c]++;
+            all[c] &= pressed;
         }
     for (int z = 0; z < RD; z++)
         for (int x = 0; x < RW; x++) {
             if (lv->map[z][x] != '=') continue;
-            int open = plates > 0 && all;
+            int c = lv->chan[z][x] & 3, open = plates[c] > 0 && all[c];
             for (int i = 0; i < MAXPLAYER && !open; i++)
                 open = g_pl[i].on && body_on_cell(&g_pl[i], x, z);
             world_set_gate(x, z, open);
@@ -123,15 +125,17 @@ static void place_player(int p)
 {
     static const int NB[9][2] = { { 0, 0 }, { 0, 1 }, { 0, -1 }, { -1, 0 }, { 1, 0 }, { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } };
     const Level *lv = &g_levels[g_cur_level];
-    int x = lv->sx, z = lv->sz;
-    for (int k = p ? 1 : 0; k < 9; k++) {
-        int cx = lv->sx + NB[k][0], cz = lv->sz + NB[k][1];
+    int own = p == 1 && lv->has_start2;                   /* 나뉜 방: 2번 플레이어는 자기 시작 칸에 선다 */
+    int bx = own ? lv->sx2 : lv->sx, bz = own ? lv->sz2 : lv->sz, x = bx, z = bz;
+    char face = own ? lv->face2 : lv->face;
+    for (int k = p && !own ? 1 : 0; k < 9; k++) {
+        int cx = bx + NB[k][0], cz = bz + NB[k][1];
         if (lv->map[cz][cx] == '.') { x = cx; z = cz; break; }
     }
     Player *pl = &g_pl[p];
     pl->x = (float)x + 0.5f;
     pl->z = (float)z + 0.5f;
-    pl->yaw = lv->face == 'E' ? PI / 2 : lv->face == 'W' ? -PI / 2 : lv->face == 'N' ? PI : 0;
+    pl->yaw = face == 'E' ? PI / 2 : face == 'W' ? -PI / 2 : face == 'N' ? PI : 0;
     pl->pitch = -0.35f;
     pl->carry = -1;
 }
@@ -153,6 +157,11 @@ void game_solve_setup(void)
         g_pl[1].on = 1;
         g_pl[1].x = (float)lv->stand_x + 0.5f;
         g_pl[1].z = (float)lv->stand_z + 0.5f;
+    }
+    if (lv->has_stand2) {                                 /* 두 사람이 모두 서 있어야 하는 방 */
+        g_pl[0].on = 1;
+        g_pl[0].x = (float)lv->stand2_x + 0.5f;
+        g_pl[0].z = (float)lv->stand2_z + 0.5f;
     }
     for (int i = 0; i < lv->nmove; i++) {                 /* 물체를 옮겨야 풀리는 방 (상자를 발판이나 빛길에) */
         const signed char *m = lv->move[i];
@@ -278,7 +287,8 @@ static int circle_hits(int self, float x, float z)
 {
     for (int cz = (int)floorf(z - PR); cz <= (int)floorf(z + PR); cz++)
         for (int cx = (int)floorf(x - PR); cx <= (int)floorf(x + PR); cx++) {
-            int solid = cx < 0 || cz < 0 || cx >= RW || cz >= RD || g_blk[1][cz][cx] != B_AIR || g_objat[cz][cx];
+            int solid = cx < 0 || cz < 0 || cx >= RW || cz >= RD || g_blk[1][cz][cx] != B_AIR || g_objat[cz][cx] ||
+                        g_blk[0][cz][cx] == B_HATCH;      /* 전달 창구는 사람이 지나갈 수 없다 */
             if (!solid) continue;
             float qx = clampf(x, (float)cx, (float)cx + 1), qz = clampf(z, (float)cz, (float)cz + 1);
             if ((qx - x) * (qx - x) + (qz - z) * (qz - z) < PR * PR) return 1;
@@ -308,17 +318,18 @@ void game_find_target(int p)
         float tmy = fabsf(dy) > 1e-6f ? (dy > 0 ? (float)y + 1 - oy : oy - (float)y) * tdy : 1e30f;
         float tmz = fabsf(dz) > 1e-6f ? (dz > 0 ? (float)z + 1 - oz : oz - (float)z) * tdz : 1e30f;
         for (int i = 0; i < 24; i++) {
-            int axis;
+            int axis, in_hatch = x >= 0 && z >= 0 && x < RW && z < RD && g_blk[0][z][x] == B_HATCH;
             float t;
             if (tmx < tmy && tmx < tmz) { t = tmx; x += sx; tmx += tdx; axis = 0; }
             else if (tmy < tmz) { t = tmy; y += sy; tmy += tdy; axis = 1; }
             else { t = tmz; z += sz; tmz += tdz; axis = 2; }
             if (t > 4.5f || x < 0 || z < 0 || x >= RW || z >= RD || y < 0) return;
+            if (in_hatch && axis != 1) return;            /* 전달 창구 너머(상대 방)의 물체나 바닥은 겨눌 수 없다 */
             if (y >= RH) continue;
             if (y == 1 && g_objat[z][x]) { pl->tobj = g_objat[z][x] - 1; return; }
             int b = g_blk[y][z][x];
             if (b != B_AIR) {
-                if ((b == B_FLOOR || b == B_PLATE || b == B_PLATE_ON) && y == 0 && axis == 1 && cell_free(x, z)) { pl->tx = x; pl->tz = z; }
+                if ((b == B_FLOOR || b == B_PLATE || b == B_PLATE_ON || b == B_HATCH) && y == 0 && axis == 1 && cell_free(x, z)) { pl->tx = x; pl->tz = z; }
                 break;
             }
         }
@@ -465,10 +476,13 @@ static void hint(int p)
         else set_hint(p, i, -1, -1, "테두리 친 %s%s E로 %d번 돌리세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"), d);
         return;
     }
-    int taken = lv->has_stand && g_objat[lv->stand_z][lv->stand_x];
-    for (int i = 0; i < MAXPLAYER && lv->has_stand; i++) taken |= g_pl[i].on && body_on_cell(&g_pl[i], lv->stand_x, lv->stand_z);
-    if (lv->has_stand && !taken) {                        /* 누군가 서서 빛을 막거나 발판을 눌러야 하는 방 */
-        set_hint(p, -1, lv->stand_x, lv->stand_z, lv->coop ? "한 사람이 노란 칸에 서 있어야 해요" : "노란 칸에 서 있거나 물체를 올려 두세요");
+    for (int k = 0; k < 2; k++) {                         /* 누군가 서서 빛을 막거나 발판을 눌러야 하는 방 */
+        int has = k ? lv->has_stand2 : lv->has_stand, x = k ? lv->stand2_x : lv->stand_x, z = k ? lv->stand2_z : lv->stand_z;
+        if (!has) continue;
+        int taken = g_objat[z][x] != 0;
+        for (int i = 0; i < MAXPLAYER; i++) taken |= g_pl[i].on && body_on_cell(&g_pl[i], x, z);
+        if (taken) continue;
+        set_hint(p, -1, x, z, lv->coop ? "한 사람이 노란 칸에 서 있어야 해요" : "노란 칸에 서 있거나 물체를 올려 두세요");
         return;
     }
     set_hint(p, -1, -1, -1, "물체는 제자리예요. 빛을 가리고 있지 않은지 확인해 보세요");

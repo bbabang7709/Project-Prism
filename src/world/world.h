@@ -12,8 +12,11 @@
  *   name 빛의 신전        방 이름
  *   start 2 8 E          시작 칸 (x z)과 바라보는 방향 E S W N
  *   rot 6 2 2            (x, z) 칸 물체의 처음 각도 0~7 (거울은 22.5도, 광원은 45도 단위)
- *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀)
- *   stand 4 8            풀이 확인(--solve)에서 누군가 이 칸에 서 있다고 본다 (발판 방)
+ *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀). 칸 없이 "coop"만 써도 된다
+ *   start2 12 4 W        2번 플레이어의 시작 칸과 방향 (나뉜 방에서 각자 다른 방에서 시작)
+ *   link 4 5 1           (x, z)의 발판·감지기·창살을 1번 연결에 묶는다 (0~3, 기본 0).
+ *                        창살은 같은 번호의 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 열린다
+ *   stand 4 8            풀이 확인(--solve)에서 누군가 이 칸에 서 있다고 본다 (발판 방). 두 번 쓰면 두 사람
  *   move 3 9 13 7        풀이 확인에서 (3, 9) 칸의 물체를 (13, 7)로 옮긴 뒤에 푼다 (4줄까지, 상자 방)
  *   map                  다음 12줄이 16칸짜리 지도
  *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원   P 프리즘  M 거울  S 반투명 거울
@@ -21,6 +24,7 @@
  *             _ 발판  = 창살 (발판이 모두 눌려 있고 감지기가 모두 빛을 받는 동안 열린다. 발판은 사람이나 물체가 누른다)
  *             O 감지기 (빛을 받으면 켜진다)  T 순간이동 고리 (방에 0개나 2개. 한쪽에 든 빛이 다른 쪽에서 같은 방향으로 나온다)
  *             K 상자 (들고 다닐 수 있다. 빛을 막고 발판을 누른다)
+ *             h 전달 창구 (사람은 못 지나가고, 빛은 지나가고, 물체는 올려놓고 양쪽에서 집을 수 있다)
  */
 #ifndef PRISM_WORLD_H
 #define PRISM_WORLD_H
@@ -31,7 +35,7 @@
 
 #define MAXLEVEL 16
 
-enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE };   /* 발판(안 눌림/눌림), 창살 */
+enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE, B_HATCH };   /* 발판(안 눌림/눌림), 창살, 전달 창구 바닥 */
 enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX };
 
 typedef struct {
@@ -53,10 +57,15 @@ typedef struct {
     int nmove;                /* 풀이 확인용: 물체를 옮긴 뒤에 풀린다 (move x1 z1 x2 z2) */
     signed char move[4][4];
     char file[64];            /* 읽어 온 파일 이름 (폴더 빼고). 기본 방이나 새 방은 빈 문자열 */
+    signed char chan[RD][RW]; /* 발판·감지기·창살의 연결 번호 0~3 (link 줄) */
+    int has_start2, sx2, sz2; /* 2번 플레이어의 시작 칸 (start2 줄) */
+    char face2;
+    int has_stand2, stand2_x, stand2_z;   /* 풀이 확인용 두 번째 사람 (두 번째 stand 줄) */
     char note[512];           /* 파일 맨 위의 설명 주석 줄들 ('#' 포함, 줄마다 '\n'). 에디터가 저장할 때 그대로 다시 쓴다 */
 } Level;
 
 extern const char *KIND_NAME[];          /* O_* 번호로 찾는 물체 이름 */
+extern const float CHAN_COL[4][3];       /* 연결 번호별 색 (0: 청록, 1: 주황, 2: 분홍, 3: 하늘) */
 
 extern Level g_levels[MAXLEVEL];
 extern int g_nlevels, g_cur_level;       /* 방 수, 지금 방 (0부터) */

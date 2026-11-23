@@ -13,6 +13,8 @@
 
 const char *KIND_NAME[] = { "", "광원", "거울", "반투명 거울", "프리즘", "필터", "수정", "감지기", "순간이동 고리", "상자" };
 
+const float CHAN_COL[4][3] = { { 0.45f, 1, 0.8f }, { 1, 0.55f, 0.15f }, { 0.95f, 0.35f, 0.85f }, { 0.35f, 0.65f, 1 } };
+
 Level g_levels[MAXLEVEL];
 int g_nlevels, g_cur_level;
 
@@ -53,7 +55,7 @@ void world_use_builtin(void)
 
 /* ---------- 방 파일 읽기 ---------- */
 
-static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYOTK";
+static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYOTKh";
 static const char OBJ_CHARS[] = "EPMSbrRGBYOTK";
 
 static int fail(char *err, size_t errlen, const char *file, int line, const char *fmt, ...)
@@ -99,8 +101,8 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     memset(lv, 0, sizeof *lv);
     lv->sx = -1;
     int rows = -1, rc = 0, lineno = 0, nobj = 0, nemit = 0, ncrystal = 0, nportal = 0, seen_item = 0;
-    struct { int x, z, r, line; } rots[MAXOBJ * 2];
-    int nrots = 0;
+    struct { int x, z, r, line; } rots[MAXOBJ * 2], links[RW * RD];
+    int nrots = 0, nlinks = 0;
     char *start = text;
     if (!strncmp(start, "\xEF\xBB\xBF", 3)) start += 3;   /* UTF-8 BOM (Windows 메모장이 붙인다) 건너뛰기. 짧은 파일에서도 끝을 넘지 않게 strncmp */
     for (char *line = start, *next; line && rc == 0; line = next) {
@@ -147,11 +149,27 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
                 rc = fail(err, errlen, path, lineno, "rot는 \"rot x z 각도(0~7)\" 형식입니다");
             else rots[nrots++].line = lineno;
         } else if (!strcmp(word, "stand")) {
-            if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "stand는 \"stand x z\" 형식입니다");
-            lv->has_stand = 1;
+            int *px = lv->has_stand ? &lv->stand2_x : &lv->stand_x, *pz = lv->has_stand ? &lv->stand2_z : &lv->stand_z;
+            if (lv->has_stand2) rc = fail(err, errlen, path, lineno, "stand는 두 줄까지입니다");
+            else if (sscanf(arg, "%d %d", px, pz) != 2) rc = fail(err, errlen, path, lineno, "stand는 \"stand x z\" 형식입니다");
+            else if (lv->has_stand) lv->has_stand2 = 1;
+            else lv->has_stand = 1;
         } else if (!strcmp(word, "coop")) {
-            if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "coop은 \"coop x z\" 형식입니다");
-            lv->coop = lv->has_stand = 1;
+            lv->coop = 1;
+            if (!arg[0]) continue;                        /* "coop"만: 2인용 방이지만 정해진 칸은 없다 */
+            if (sscanf(arg, "%d %d", &lv->stand_x, &lv->stand_z) != 2) rc = fail(err, errlen, path, lineno, "coop은 \"coop\"이나 \"coop x z\" 형식입니다");
+            lv->has_stand = 1;
+        } else if (!strcmp(word, "start2")) {
+            char f = 0;
+            if (sscanf(arg, "%d %d %c", &lv->sx2, &lv->sz2, &f) != 3 || !f || !strchr("ESWN", f))
+                rc = fail(err, errlen, path, lineno, "start2는 \"start2 x z 방향(E S W N)\" 형식입니다");
+            lv->face2 = f;
+            lv->has_start2 = 1;
+        } else if (!strcmp(word, "link")) {
+            if (nlinks >= (int)(sizeof links / sizeof links[0])) rc = fail(err, errlen, path, lineno, "link 줄이 너무 많습니다");
+            else if (sscanf(arg, "%d %d %d", &links[nlinks].x, &links[nlinks].z, &links[nlinks].r) != 3 || links[nlinks].r < 0 || links[nlinks].r > 3)
+                rc = fail(err, errlen, path, lineno, "link는 \"link x z 번호(0~3)\" 형식입니다");
+            else links[nlinks++].line = lineno;
         } else if (!strcmp(word, "move")) {
             int m[4];
             if (lv->nmove >= 4) rc = fail(err, errlen, path, lineno, "move 줄은 4개까지입니다");
@@ -173,6 +191,16 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     if (lv->sx < 0) return fail(err, errlen, path, 0, "start 줄이 없습니다");
     if (lv->sx <= 0 || lv->sz <= 0 || lv->sx >= RW - 1 || lv->sz >= RD - 1 || lv->map[lv->sz][lv->sx] != '.')
         return fail(err, errlen, path, 0, "시작 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->sx, lv->sz);
+    if (lv->has_stand2 && (lv->stand2_x <= 0 || lv->stand2_z <= 0 || lv->stand2_x >= RW - 1 || lv->stand2_z >= RD - 1 || !strchr("._", lv->map[lv->stand2_z][lv->stand2_x])))
+        return fail(err, errlen, path, 0, "두 번째 stand 칸 (%d, %d)이 바닥이나 발판이 아닙니다", lv->stand2_x, lv->stand2_z);
+    if (lv->has_start2 && (lv->sx2 <= 0 || lv->sz2 <= 0 || lv->sx2 >= RW - 1 || lv->sz2 >= RD - 1 || lv->map[lv->sz2][lv->sx2] != '.'))
+        return fail(err, errlen, path, 0, "start2 칸 (%d, %d)이 빈 바닥이 아닙니다", lv->sx2, lv->sz2);
+    for (int i = 0; i < nlinks; i++) {
+        int x = links[i].x, z = links[i].z;
+        if (x < 0 || z < 0 || x >= RW || z >= RD || !strchr("_=O", lv->map[z][x]))
+            return fail(err, errlen, path, links[i].line, "link의 칸 (%d, %d)이 발판·창살·감지기가 아닙니다", x, z);
+        lv->chan[z][x] = (signed char)links[i].r;
+    }
     if (lv->has_stand && (lv->stand_x <= 0 || lv->stand_z <= 0 || lv->stand_x >= RW - 1 || lv->stand_z >= RD - 1 || !strchr("._", lv->map[lv->stand_z][lv->stand_x])))
         return fail(err, errlen, path, 0, "coop/stand 칸 (%d, %d)이 바닥이나 발판이 아닙니다", lv->stand_x, lv->stand_z);
     for (int i = 0; i < nrots; i++) {
@@ -254,6 +282,14 @@ int world_check_level(const Level *lv, char *err, size_t errlen)
     if (!ncrystal) { snprintf(err, errlen, "수정이 없어요"); return -1; }
     if (nportal != 0 && nportal != 2) { snprintf(err, errlen, "순간이동 고리는 0개나 2개여야 해요 (지금 %d개)", nportal); return -1; }
     if (lv->map[lv->sz][lv->sx] != '.') { snprintf(err, errlen, "시작 칸 (%d, %d)이 빈 바닥이 아니에요", lv->sx, lv->sz); return -1; }
+    if (lv->has_start2 && (lv->sx2 <= 0 || lv->sz2 <= 0 || lv->sx2 >= RW - 1 || lv->sz2 >= RD - 1 || lv->map[lv->sz2][lv->sx2] != '.' ||
+                           (lv->sx2 == lv->sx && lv->sz2 == lv->sz))) {
+        snprintf(err, errlen, "2번 시작 칸 (%d, %d)이 빈 바닥이 아니에요", lv->sx2, lv->sz2);
+        return -1;
+    }
+    for (int z = 0; z < RD; z++)
+        for (int x = 0; x < RW; x++)
+            if (lv->chan[z][x] < 0 || lv->chan[z][x] > 3) { snprintf(err, errlen, "(%d, %d)의 연결 번호가 0~3이 아니에요", x, z); return -1; }
     return 0;
 }
 
@@ -279,8 +315,14 @@ int world_save_level(const Level *lv, const char *file, char *err, size_t errlen
     n += (size_t)snprintf(text + n, sizeof text - n, "%s", lv->note[0] ? lv->note : "# PRISM 방 파일 (레벨 에디터로 만듦)\n");
     n += (size_t)snprintf(text + n, sizeof text - n, "name %s\nstart %d %d %c\n",
                           lv->name[0] ? lv->name : "이름 없는 방", lv->sx, lv->sz, lv->face ? lv->face : 'E');
-    if (lv->coop) n += (size_t)snprintf(text + n, sizeof text - n, "coop %d %d\n", lv->stand_x, lv->stand_z);
+    if (lv->has_start2) n += (size_t)snprintf(text + n, sizeof text - n, "start2 %d %d %c\n", lv->sx2, lv->sz2, lv->face2 ? lv->face2 : 'W');
+    if (lv->coop && lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "coop %d %d\n", lv->stand_x, lv->stand_z);
+    else if (lv->coop) n += (size_t)snprintf(text + n, sizeof text - n, "coop\n");
     else if (lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "stand %d %d\n", lv->stand_x, lv->stand_z);
+    if (lv->has_stand2) n += (size_t)snprintf(text + n, sizeof text - n, "stand %d %d\n", lv->stand2_x, lv->stand2_z);
+    for (int z = 0; z < RD; z++)                          /* 연결 번호 (발판·창살·감지기 칸에 남아 있는 것만) */
+        for (int x = 0; x < RW; x++)
+            if (lv->chan[z][x] && strchr("_=O", lv->map[z][x])) n += (size_t)snprintf(text + n, sizeof text - n, "link %d %d %d\n", x, z, lv->chan[z][x]);
     for (int i = 0; i < lv->nmove && i < 4; i++) {        /* 에디터에서 지도를 바꿔 맞지 않게 된 move는 버린다 */
         const signed char *m = lv->move[i];
         if (strchr("PMSbrK", lv->map[m[1]][m[0]]) && strchr("._", lv->map[m[3]][m[2]]))
@@ -371,6 +413,7 @@ void load_level(void)
             case 'g': g_blk[1][z][x] = B_GLASS; break;
             case '_': g_blk[0][z][x] = B_PLATE; break;
             case '=': g_blk[1][z][x] = g_blk[2][z][x] = B_GATE; break;
+            case 'h': g_blk[0][z][x] = B_HATCH; g_blk[2][z][x] = g_blk[3][z][x] = B_WALL; break;   /* 벽에 뚫린 낮은 창구 */
             case 'E': add_obj(O_EMIT, x, z, rot, 0, 1, 1, 1); break;
             case 'P': add_obj(O_PRISM, x, z, rot, 1, 0, 0, 0); break;
             case 'M': add_obj(O_MIRROR, x, z, rot, 1, 0, 0, 0); break;
@@ -381,7 +424,11 @@ void load_level(void)
             case 'G': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 1, 0); break;
             case 'B': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 0, 1); break;
             case 'Y': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 1, 0); break;
-            case 'O': add_obj(O_SENSOR, x, z, rot, 0, 0.45f, 1, 0.8f); break;   /* col: 켜졌을 때 표시 색 */
+            case 'O': {                                   /* col: 켜졌을 때 표시 색 (연결 번호마다 다르다) */
+                const float *c = CHAN_COL[lv->chan[z][x] & 3];
+                add_obj(O_SENSOR, x, z, rot, 0, c[0], c[1], c[2]);
+                break;
+            }
             case 'T': add_obj(O_PORTAL, x, z, rot, 0, 0.8f, 0.35f, 1); break;
             case 'K': add_obj(O_BOX, x, z, rot, 1, 0.75f, 0.5f, 0.28f); break;
             }
