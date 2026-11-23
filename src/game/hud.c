@@ -140,8 +140,8 @@ void hud_draw(int frame, int fps, const char *net)
     if (g_help) {
         term_bar(g_rows - 1, 0x161822);
         term_text(1, g_rows - 1, 0x9AA0B0, 0x161822,
-             me->fp ? "WASD 걷기   방향키 시선   F 들기/놓기   Q/E·휠 거울 돌리기   Tab 내려다보기   R 처음부터   H 도움말   G 화면   ESC 메뉴"
-                  : "WASD 걷기   ←→ 카메라 회전   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   R 처음부터   ESC 메뉴");
+             me->fp ? "WASD 걷기   방향키 시선   F 들기/놓기   Q/E·휠 거울 돌리기   Tab 내려다보기   Z 되돌리기   R 처음부터   H 도움말   G 화면   ESC 메뉴"
+                  : "WASD 걷기   ←→ 카메라 회전   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   Z 되돌리기   R 처음부터   ESC 메뉴");
     }
     if (me->msg_t > 0) term_text(g_cols / 2 - term_str_w(me->msg) / 2 - 1, 2, g_solved ? 0x101010 : 0xFFFFFF, g_solved ? 0x7CE07C : 0x2A2F3C, " %s ", me->msg);
     if (g_cleared) {                                      /* 끝 화면: 기록과 안내 */

@@ -21,7 +21,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 3                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자 */
+#define VERSION 4                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기 */
 #define MAXMSG 2048
 
 typedef struct {

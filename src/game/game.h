@@ -3,6 +3,7 @@
  *
  * 빛은 물체가 바뀌거나 몸이 움직였을 때만 다시 계산한다 (game_simulate).
  * 모든 플레이어의 몸이 빛을 가린다.
+ * 들기·놓기·돌리기는 하기 전 상태를 기억해 두어 되돌릴 수 있다 (ACT_UNDO, 방마다 64번까지).
  *
  * 혼자 할 때와 호스트는 이 모듈이 모든 플레이어를 움직인다(game_tick).
  * 참가자(클라이언트)는 호스트가 보낸 상태를 받아 그리기만 하고, 키와 동작은 호스트로 보낸다.
@@ -18,7 +19,7 @@
 enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_LEFT = 16, K_RIGHT = 32, K_UP = 64, K_DOWN = 128 };
 
 /* 조작 (네트워크로 보내는 단위이기도 하다) */
-enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET };
+enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO };
 
 typedef struct {
     int on;                             /* 이 자리에 플레이어가 있다 */
@@ -44,6 +45,7 @@ extern int g_moves;                     /* 지금 방에서 조작한 횟수 */
 extern int g_cleared;                   /* 마지막 방의 문까지 지났다 */
 extern int g_ticks;                     /* 플레이한 틱 수 (1/30초, 끝나면 멈춘다) */
 extern int g_total_moves;               /* 모든 방에서 조작한 횟수 */
+extern int g_record;                    /* 1이면 방을 풀 때 진행 기록(progress)에 남긴다 (혼자 하기, 호스트) */
 
 void game_reset(void);                  /* 새 게임: 플레이어, 카메라, 기록을 처음 값으로 */
 

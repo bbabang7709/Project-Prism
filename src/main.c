@@ -24,6 +24,7 @@
 #include "game/hud.h"
 #include "game/editor.h"
 #include "game/menu.h"
+#include "game/progress.h"
 #include "net/net.h"
 #include "platform/clock.h"
 #include "platform/input.h"
@@ -86,6 +87,7 @@ static void go_menu(const char *msg)
     prepare_levels(0);
     game_init(0);
     game_solve();                                         /* 배경은 풀린 방을 보여 준다 */
+    progress_load();                                      /* 메뉴에 푼 방을 표시한다 */
     menu_open(msg);
     s_ui = UI_MENU;
 }
@@ -94,6 +96,7 @@ static void start_solo(int level)
 {
     game_reset();
     prepare_levels(1);
+    g_record = 1;                                         /* 푼 방을 진행 기록에 남긴다 */
     game_init(level < g_nlevels ? level : 0);
     game_find_target(g_me);
     game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
@@ -105,6 +108,7 @@ static void start_host(int level)
     char err[256];
     game_reset();
     prepare_levels(0);
+    g_record = 1;
     game_init(level < g_nlevels ? level : 0);
     if (net_host(s_port, err, sizeof err) < 0) { go_menu(err); return; }
     game_find_target(g_me);
@@ -201,6 +205,7 @@ static void on_press(int vk)
     else if (vk == 'Q') do_action(ACT_ROT_LEFT);
     else if (vk == 'E') do_action(ACT_ROT_RIGHT);
     else if (vk == 'R') do_action(ACT_RESET);
+    else if (vk == 'Z') do_action(ACT_UNDO);
     else game_view_key(vk);
 }
 

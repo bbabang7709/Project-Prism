@@ -4,6 +4,7 @@
 #include <string.h>
 #include "game/game.h"
 #include "game/hud.h"
+#include "game/progress.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
 #include "renderer/renderer.h"
@@ -17,6 +18,8 @@ static int s_room_solo, s_room_host;    /* 고른 시작 방: s_solo 안의 번�
 static int s_room_edit;                 /* 고칠 방: g_levels 번호, s_nall이면 새 방 */
 static char s_names[MAXLEVEL][64];
 static int s_coop[MAXLEVEL], s_nall;
+static int s_best[MAXLEVEL];            /* 방마다 가장 적은 조작 횟수 (못 풀었으면 -1) */
+static int s_opened;                    /* 처음 연 메뉴인가 (시작 방을 아직 못 푼 첫 방으로) */
 static char s_addr[64];                 /* 참가할 주소 */
 static int s_editing;                   /* 주소를 입력하는 중 */
 static int s_help;                      /* 조작법 보기 */
@@ -33,7 +36,13 @@ void menu_open(const char *msg)
         memcpy(s_names[i], g_levels[i].name, sizeof s_names[i]);
         s_names[i][sizeof s_names[i] - 1] = 0;
         s_coop[i] = g_levels[i].coop;
+        s_best[i] = progress_best(g_levels[i].file);
         if (!g_levels[i].coop) s_solo[s_nsolo++] = i;
+    }
+    if (!s_opened) {                                      /* 이어 하기: 혼자 하기의 시작 방을 아직 못 푼 첫 방으로 */
+        s_opened = 1;
+        for (int k = 0; k < s_nsolo; k++)
+            if (s_best[s_solo[k]] < 0) { s_room_solo = k; break; }
     }
     if (s_room_solo >= s_nsolo) s_room_solo = 0;
     if (s_room_host >= s_nall) s_room_host = 0;
@@ -115,7 +124,7 @@ static void draw_help(int x0, int y0, int w)
         "Q E / 휠       겨눈 거울을 22.5도씩 돌리기",
         "Tab            1인칭 ↔ 내려다보기",
         "+ -            내려다보기 확대·축소",
-        "R              방을 처음 상태로",
+        "Z / R          마지막 조작 되돌리기 / 방을 처음 상태로",
         "H              도움말 줄 숨기기",
         "G              화면 방식 (2×2 선명 ↔ 반블록)",
         "ESC            메뉴로 (메뉴에서는 끝내기)",
@@ -173,7 +182,9 @@ void menu_draw(int frame)
             char val[96] = "";
             if (i == IT_SOLO && s_nsolo) {
                 int lv = s_solo[s_room_solo];
-                snprintf(val, sizeof val, "◀ 방 %d  %.40s ▶", s_room_solo + 1, s_names[lv]);
+                char done[32] = "";                       /* 푼 방: 가장 적은 조작 횟수 */
+                if (s_best[lv] >= 0) snprintf(done, sizeof done, "  ✓ %d번", s_best[lv]);
+                snprintf(val, sizeof val, "◀ 방 %d  %.30s%s ▶", s_room_solo + 1, s_names[lv], done);
             } else if (i == IT_HOST && s_nall) {
                 snprintf(val, sizeof val, "◀ 방 %d  %.34s%s ▶", s_room_host + 1, s_names[s_room_host], s_coop[s_room_host] ? " (2인)" : "");
             } else if (i == IT_EDIT) {

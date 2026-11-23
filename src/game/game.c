@@ -3,8 +3,10 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include "common/config.h"
 #include "common/mathutil.h"
+#include "game/progress.h"
 #include "optics/optics.h"
 #include "platform/input.h"
 #include "world/world.h"
@@ -23,6 +25,13 @@ int g_moves;
 int g_cleared;
 int g_ticks;
 int g_total_moves;
+int g_record;
+
+/* 되돌리기: 조작하기 전의 물체 상태와 각자 든 물체 (방을 바꾸거나 처음 상태로 하면 비운다) */
+#define MAXUNDO 64
+typedef struct { int x[MAXOBJ], z[MAXOBJ], rot[MAXOBJ], held[MAXOBJ], carry[MAXPLAYER]; } Snap;
+static Snap s_undo[MAXUNDO];
+static int s_nundo;
 
 void game_reset(void)
 {
@@ -34,6 +43,8 @@ void game_reset(void)
     cam_pitch = -0.98f;
     cam_dist = 17.5f;
     g_solved = g_moves = g_cleared = g_ticks = g_total_moves = 0;
+    g_record = 0;
+    s_nundo = 0;
 }
 
 /* ---------- 빛 계산과 문 ---------- */
@@ -127,6 +138,7 @@ static void place_player(int p)
 
 void game_init(int level)
 {
+    s_nundo = 0;
     g_cur_level = level;
     load_level();
     for (int i = 0; i < MAXPLAYER; i++)
@@ -200,6 +212,49 @@ static void after_change(void)
     if (g_solved && !was) game_message(-1, "모든 수정이 빛났어요! 문이 열렸습니다 (%d번 조작)", g_moves);
 }
 
+/* 조작하기 전 상태를 기억한다. 가득 차면 가장 오래된 것을 버린다 */
+static void push_undo(void)
+{
+    if (s_nundo == MAXUNDO) {
+        memmove(s_undo, s_undo + 1, sizeof s_undo[0] * (MAXUNDO - 1));
+        s_nundo--;
+    }
+    Snap *u = &s_undo[s_nundo++];
+    for (int i = 0; i < g_nobj; i++) { u->x[i] = g_obj[i].x; u->z[i] = g_obj[i].z; u->rot[i] = g_obj[i].rot; u->held[i] = g_obj[i].held; }
+    for (int i = 0; i < MAXPLAYER; i++) u->carry[i] = g_pl[i].carry;
+}
+
+/* 마지막 조작을 되돌린다. 되돌리면 물체가 놓일 칸에 사람이 서 있거나,
+ * 그때 물체를 들고 있던 사람이 나갔으면 되돌리지 않는다 (사람이 물체에 끼이거나 물체가 사라지지 않게) */
+static void undo(int p)
+{
+    if (!s_nundo) { game_message(p, "되돌릴 조작이 없어요"); return; }
+    const Snap *u = &s_undo[s_nundo - 1];
+    for (int i = 0; i < MAXPLAYER; i++)
+        if (u->carry[i] >= 0 && !g_pl[i].on) { game_message(p, "그 물체를 들고 있던 사람이 나가서 되돌릴 수 없어요"); return; }
+    for (int i = 0; i < g_nobj; i++) {
+        if (u->held[i] || (u->x[i] == g_obj[i].x && u->z[i] == g_obj[i].z && !g_obj[i].held)) continue;
+        for (int k = 0; k < MAXPLAYER; k++)
+            if (g_pl[k].on && body_on_cell(&g_pl[k], u->x[i], u->z[i])) {
+                game_message(p, "%s이(가) 돌아갈 자리에 누가 서 있어요. 비켜 서면 되돌릴 수 있어요", KIND_NAME[g_obj[i].kind]);
+                return;
+            }
+    }
+    s_nundo--;
+    memset(g_objat, 0, sizeof g_objat);
+    for (int i = 0; i < g_nobj; i++) {
+        Obj *o = &g_obj[i];
+        o->x = u->x[i]; o->z = u->z[i]; o->rot = u->rot[i]; o->held = u->held[i];
+        if (!o->held) g_objat[o->z][o->x] = i + 1;
+    }
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].carry = u->carry[i];
+    int was = g_solved;
+    game_simulate();
+    if (g_solved && !was) game_message(-1, "모든 수정이 빛났어요! 문이 열렸습니다");
+    else game_message(-1, "한 번 되돌렸어요 (더 되돌릴 수 있는 횟수 %d)", s_nundo);
+    for (int i = 0; i < MAXPLAYER; i++) if (g_pl[i].on) game_find_target(i);
+}
+
 static int cell_free(int x, int z)
 {
     return x > 0 && z > 0 && x < RW - 1 && z < RD - 1 && g_blk[1][z][x] == B_AIR && !g_objat[z][x] &&
@@ -271,6 +326,7 @@ static void take_or_place(int p)
     Player *pl = &g_pl[p];
     if (pl->carry >= 0) {
         if (pl->tx < 0) { game_message(p, "빈 바닥을 겨누고 F를 누르면 내려놓아요"); return; }
+        push_undo();
         Obj *o = &g_obj[pl->carry];
         o->x = pl->tx; o->z = pl->tz; o->held = 0;
         g_objat[pl->tz][pl->tx] = pl->carry + 1;
@@ -283,6 +339,7 @@ static void take_or_place(int p)
     if (pl->tobj < 0) { game_message(p, "물체를 겨누고 F를 누르면 들 수 있어요"); return; }
     Obj *o = &g_obj[pl->tobj];
     if (!o->movable) { game_message(p, "%s은(는) 고정되어 있어요", KIND_NAME[o->kind]); return; }
+    push_undo();
     g_objat[o->z][o->x] = 0;
     o->held = 1;
     pl->carry = pl->tobj;
@@ -297,6 +354,7 @@ static void rotate(int p, int d)
     Obj *o = pl->tobj >= 0 ? &g_obj[pl->tobj] : pl->carry >= 0 ? &g_obj[pl->carry] : NULL;
     if (!o) { game_message(p, "돌릴 거울을 겨누세요"); return; }
     if (o->kind != O_MIRROR && o->kind != O_SPLIT) { game_message(p, "%s은(는) 돌릴 수 없어요", KIND_NAME[o->kind]); return; }
+    push_undo();
     o->rot = (o->rot + d + 8) % 8;
     after_change();
 }
@@ -304,6 +362,7 @@ static void rotate(int p, int d)
 /* 지금 방을 처음 상태로 만들고 모두 시작 칸에 선다 */
 static void restart_room(void)
 {
+    s_nundo = 0;
     load_level();
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) place_player(i);
@@ -316,10 +375,12 @@ static void restart_room(void)
 /* 열린 문을 지났다: 다음 방으로, 마지막 방이면 끝 */
 static void through_door(void)
 {
+    int rec = g_record ? progress_record(g_levels[g_cur_level].file, g_moves) : 0, moves = g_moves;
     if (g_cur_level + 1 < g_nlevels) {
         g_cur_level++;
         restart_room();
-        game_message(-1, "방 %d/%d: %s", g_cur_level + 1, g_nlevels, g_levels[g_cur_level].name);
+        if (rec == 1) game_message(-1, "방 %d/%d: %s   (지난 방 새 기록: %d번 조작)", g_cur_level + 1, g_nlevels, g_levels[g_cur_level].name, moves);
+        else game_message(-1, "방 %d/%d: %s", g_cur_level + 1, g_nlevels, g_levels[g_cur_level].name);
     } else if (!g_cleared) {
         g_cleared = 1;
         game_message(-1, "모든 방을 풀었어요! 빛의 신전을 빠져나왔습니다");
@@ -334,6 +395,7 @@ void game_action(int p, int act)
     case ACT_ROT_LEFT: rotate(p, -1); break;
     case ACT_ROT_RIGHT: rotate(p, 1); break;
     case ACT_RESET: restart_room(); game_message(-1, "처음 상태로 되돌렸어요"); break;
+    case ACT_UNDO: undo(p); break;
     }
 }
 
