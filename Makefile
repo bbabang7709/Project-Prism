@@ -52,7 +52,13 @@ build-san/%.o: src/%.c
 
 -include $(SAN_OBJS:.o=.d)
 
+# Windows 마우스 잠금 도우미 (1인칭 마우스 시선): WSL에서 gcc-mingw-w64-x86-64 가 필요하다
+winhelper: tools/mouselock.exe
+
+tools/mouselock.exe: tools/mouselock.c
+	x86_64-w64-mingw32-gcc -O2 -Wall -mwindows $< -o $@ -lws2_32 -lwinmm
+
 clean:
 	rm -rf build build-san prism prism-san tests/out
 
-.PHONY: all test ref sanitize clean
+.PHONY: all test ref sanitize winhelper clean

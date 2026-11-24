@@ -21,7 +21,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 6                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치) */
+#define VERSION 7                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치), 7: INPUT에 마우스 시선 (참가자가 정한 시선을 호스트가 따른다) */
 #define MAXMSG 2048
 
 typedef struct {
@@ -213,7 +213,9 @@ static void apply_state(Rd *r)
     for (int i = 0; i < MAXPLAYER; i++) {
         Player *p = &g_pl[i];
         p->on = (int)get8(r);
-        p->x = getf(r); p->z = getf(r); p->yaw = getf(r); p->pitch = getf(r);
+        float yw, pt;
+        p->x = getf(r); p->z = getf(r); yw = getf(r); pt = getf(r);
+        if (!(i == g_me && g_look_local)) { p->yaw = yw; p->pitch = pt; }   /* 내 시선을 마우스로 정하고 있으면 호스트가 돌려준 값은 쓰지 않는다 */
         p->carry = (signed char)get8(r);
         p->tobj = (signed char)get8(r);
         p->tx = (signed char)get8(r);
@@ -223,7 +225,7 @@ static void apply_state(Rd *r)
         p->hint_x = (signed char)get8(r);
         p->hint_z = (signed char)get8(r);
         /* 받은 값의 범위를 확인한다: 물체 번호는 화면 표시에서 배열 번호로 쓰고, 좌표는 칸 번호로 바뀐다 */
-        if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(p->yaw) || !finite_f(p->pitch) ||
+        if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(yw) || !finite_f(pt) ||
             p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
             p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
             p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD ||
@@ -290,7 +292,14 @@ static void dispatch(int type, Rd *r)
         } else if (type == M_INPUT) {
             unsigned keys = get16(r), fp = get8(r);
             float walk = getf(r);
+            unsigned look = get8(r);                          /* 1이면 참가자의 마우스가 정한 시선이 따라온다 */
+            float lyaw = 0, lpitch = 0;
+            if (look) { lyaw = getf(r); lpitch = getf(r); }
             if (r->bad) return;
+            if (look && finite_f(lyaw) && finite_f(lpitch)) {
+                g_pl[1].yaw = fmodf(lyaw, 2 * PI);
+                g_pl[1].pitch = fmaxf(-1.3f, fminf(0.9f, lpitch));
+            }
             g_pl[1].keys = keys;
             g_pl[1].fp = fp != 0;
             g_pl[1].walk_yaw = finite_f(walk) ? fmodf(walk, 2 * PI) : 0;   /* NaN·무한대면 참가자 위치가 망가진다 */
@@ -484,6 +493,8 @@ void net_after_tick(void)
         put16(&w, game_local_keys());
         put8(&w, (unsigned)g_pl[g_me].fp);
         putf(&w, cam_yaw);
+        put8(&w, (unsigned)(g_look_local != 0));
+        if (g_look_local) { putf(&w, g_pl[g_me].yaw); putf(&w, g_pl[g_me].pitch); }
         if (send_msg(s_peer.fd, M_INPUT, &w) < 0) drop_peer("호스트와 연결이 끊어졌어요");
     }
 }

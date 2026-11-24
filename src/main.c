@@ -26,6 +26,7 @@
 #include "game/menu.h"
 #include "game/progress.h"
 #include "net/net.h"
+#include "platform/bridge.h"
 #include "platform/clock.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
@@ -35,6 +36,8 @@
 enum { UI_MENU, UI_PLAY, UI_EDIT };
 static int s_testing;                   /* 에디터에서 시험 플레이 중 (ESC로 에디터에 돌아간다) */
 static int s_ui = UI_PLAY;
+static int s_look = 1;                  /* V: 마우스로 시선 돌리기 (마우스 잠금 도우미가 연결되어 있을 때) */
+#define MOUSE_SENS 0.0022f              /* 마우스 한 칸(count)당 돌아가는 각도 (rad) */
 static const char *s_level_dir;         /* --levels */
 static int s_port = NET_PORT;           /* 메뉴에서 호스트로 시작할 때의 포트 */
 static int s_frame;
@@ -197,6 +200,10 @@ static void on_press(int vk)
     if (s_testing && (vk == VK_ESC || (g_cleared && vk == VK_ENTER))) back_to_editor();
     else if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
     else if (vk == 'H') hud_toggle_help();
+    else if (vk == 'V') {                                 /* 마우스 시선 켜기/끄기 (포인터 잠금도 같이) */
+        s_look = !s_look;
+        game_message(g_me, s_look ? "마우스 시선 켜짐: 마우스로 둘러봐요 (V로 끄기)" : "마우스 시선 꺼짐: 포인터가 풀렸어요 (V로 켜기)");
+    }
     else if (vk == 'G') {                                 /* 화면 방식 바꾸기 */
         hud_set_quad(!hud_quad());
         game_message(g_me, hud_quad() ? "선명한 화면: 한 칸에 2×2 픽셀" : "반블록 화면: 한 칸에 1×2 픽셀 (블록 글자 이음매가 보이면)");
@@ -211,6 +218,28 @@ static void on_press(int vk)
 }
 
 static void on_quit(void) { g_quit = 1; }
+
+/*
+ * 마우스 잠금 도우미(tools/mouselock.c)가 연결되어 있으면 1인칭에서 마우스로 시선을 돌린다.
+ * 도우미는 게임이 보내는 L(잠금)·U(풀기)에 따라 포인터를 숨기고 창 가운데에 고정하거나 푼다.
+ * 1인칭 플레이 중이 아니면(메뉴, 에디터, 내려다보기) 포인터를 풀어 둔다.
+ */
+static void mouse_look_update(void)
+{
+    static int was_want = -1, was_conn = 0;
+    int want = s_ui == UI_PLAY && g_pl[g_me].fp && s_look;
+    int conn = bridge_connected();
+    if (want != was_want || conn != was_conn) {        /* 도우미가 새로 연결되거나 창이 맨 앞이 되면 상태를 다시 알려 준다 */
+        bridge_send(want ? 'L' : 'U');
+        if (conn && !was_conn && s_ui == UI_PLAY) game_message(g_me, "마우스 시선 연결됨: 마우스로 둘러봐요 (V로 끄기)");
+        was_want = want;
+        was_conn = conn;
+    }
+    int dx, dy;
+    bridge_take_motion(&dx, &dy);
+    g_look_local = want && conn;
+    if (g_look_local && (dx || dy)) game_mouse_look(dx * MOUSE_SENS, dy * MOUSE_SENS);
+}
 
 /* ---------- 진입점 ---------- */
 
@@ -346,6 +375,7 @@ int main(int argc, char **argv)
     timerfd_settime(tfd, 0, &its, NULL);
     term_setup();
     term_get_size();
+    if (bridge_start() != 0) fprintf(stderr, "prism: 마우스 도우미 포트 %d를 쓸 수 없어요 (키보드 시선만 사용)\n", BRIDGE_PORT);
     int64_t now = now_ms();
     input_set_time(now);
     if (net_mode() == NET_HOST)
@@ -369,6 +399,7 @@ int main(int argc, char **argv)
         input_set_time(now);
         if (pf[0].revents & POLLIN) input_read();
         if (input_esc_expired()) on_press(VK_ESC);        /* ESC 키 단독 */
+        mouse_look_update();                              /* 마우스 잠금 도우미: 시선과 포인터 잠금 */
         net_handle(pf + 2, nnet);                         /* 접속 받기, 받은 메시지 처리 */
         if (net_lost()) {                                 /* 호스트와 끊어졌다: 이유를 보여 주며 메뉴로 */
             char why[160];
@@ -394,6 +425,7 @@ int main(int argc, char **argv)
             }
         }
     }
+    bridge_stop();                                        /* 도우미에게 포인터를 풀고 끝내라고 알린다 */
     term_restore();
     net_close();
     renderer_shutdown();
