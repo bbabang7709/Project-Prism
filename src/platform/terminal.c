@@ -148,7 +148,7 @@ void term_setup(void)
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    const char *s = "\x1b[?1049h\x1b[?25l\x1b[2J\x1b[?9001h\x1b[?1004h\x1b[?1000h\x1b[?1006h";
+    const char *s = "\x1b]0;Prism\x07\x1b[?1049h\x1b[?25l\x1b[2J\x1b[?9001h\x1b[?1004h\x1b[?1000h\x1b[?1006h";
     write_all(s, strlen(s));
 }
 

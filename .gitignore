@@ -60,3 +60,7 @@ dkms.conf
 /tests/out/
 /prism-san
 /build-san/
+
+# 마우스 잠금 도우미 빌드 결과와 기록
+/tools/mouselock.exe
+/tools/mouselock.log

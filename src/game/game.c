@@ -8,6 +8,7 @@
 #include "common/mathutil.h"
 #include "game/progress.h"
 #include "optics/optics.h"
+#include "platform/bridge.h"
 #include "platform/input.h"
 #include "world/world.h"
 
@@ -549,11 +550,28 @@ void game_view_key(int vk)
     }
 }
 
+/* 마우스로 정하는 시선 (마우스 잠금 도우미가 연결되어 있고 1인칭일 때) */
+int g_look_local;
+
+void game_mouse_look(float dx, float dy)
+{
+    Player *me = &g_pl[g_me];
+    if (!me->fp) return;
+    me->yaw = fmodf(me->yaw + dx, 2 * PI);
+    me->pitch = clampf(me->pitch - dy, -1.3f, 0.9f);
+}
+
 unsigned game_local_keys(void)
 {
-    return (input_held('W') ? K_W : 0) | (input_held('A') ? K_A : 0) | (input_held('S') ? K_S : 0) | (input_held('D') ? K_D : 0) |
+    unsigned k = (input_held('W') ? K_W : 0) | (input_held('A') ? K_A : 0) | (input_held('S') ? K_S : 0) | (input_held('D') ? K_D : 0) |
            (input_held(VK_LEFT) ? K_LEFT : 0) | (input_held(VK_RIGHT) ? K_RIGHT : 0) |
            (input_held(VK_UP) ? K_UP : 0) | (input_held(VK_DOWN) ? K_DOWN : 0);
+    if (bridge_connected()) {                              /* 도우미가 읽은 실제 키 상태 (창이 맨 앞일 때만 연결로 친다) */
+        uint32_t b = bridge_keys();
+        k |= (b & KB_W ? K_W : 0) | (b & KB_A ? K_A : 0) | (b & KB_S ? K_S : 0) | (b & KB_D ? K_D : 0) |
+             (b & KB_LEFT ? K_LEFT : 0) | (b & KB_RIGHT ? K_RIGHT : 0) | (b & KB_UP ? K_UP : 0) | (b & KB_DOWN ? K_DOWN : 0);
+    }
+    return k;
 }
 
 /* ---------- 틱 ---------- */

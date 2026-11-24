@@ -63,7 +63,9 @@ void game_leave(int p);                 /* p번 플레이어가 나갔다 (든 �
 
 void game_action(int p, int act);       /* p번 플레이어의 조작 ACT_* */
 void game_view_key(int vk);             /* 이 터미널의 시점·카메라 키 (Tab, 방향키, +/-) */
-unsigned game_local_keys(void);         /* 이 터미널에서 지금 누르고 있는 키 → K_* */
+unsigned game_local_keys(void);         /* 이 터미널에서 지금 누르고 있는 키 → K_* (마우스 잠금 도우미의 키 상태 포함) */
+void game_mouse_look(float dx, float dy);   /* 1인칭: 마우스 이동량(rad)으로 시선 돌리기. dx>0 오른쪽, dy>0 아래 */
+extern int g_look_local;                /* 1이면 내 시선은 이 터미널의 마우스가 정한다 (참가자는 호스트가 돌려준 시선을 쓰지 않는다) */
 void game_tick(float dt);               /* 모든 플레이어 걷기, 겨누기, 알림 시간 (혼자 / 호스트) */
 void game_local_tick(void);             /* 이 터미널의 카메라 따라가기와 알림 시간 (참가자) */
 
