@@ -49,10 +49,19 @@ static inline void sgr_rgb(int bg, uint32_t c)
     put_u8(c & 255); *g_op++ = 'm';
 }
 
+static int g_stat_bytes, g_stat_changed, g_stat_cells;   /* last term_present: bytes written, cells sent, cells on screen */
+
+void term_stats(int *bytes, int *changed, int *cells)
+{
+    *bytes = g_stat_bytes;
+    *changed = g_stat_changed;
+    *cells = g_stat_cells;
+}
+
 void term_present(void)
 {
     uint32_t cf = 0xFFFFFFFF, cb = 0xFFFFFFFF;
-    int cr = -1, cc = -1;
+    int cr = -1, cc = -1, changed = 0;
     g_op = g_out;
     if (g_full) { memcpy(g_op, "\x1b[0m\x1b[2J", 8); g_op += 8; }
     for (int r = 0; r < g_rows; r++)
@@ -72,9 +81,13 @@ void term_present(void)
             g_op += n;
             cr = r;
             cc = c + (b->wide == 1 ? 2 : 1);
+            changed++;
         }
     g_op += sprintf(g_op, "\x1b[0m");
     write_all(g_out, (size_t)(g_op - g_out));
+    g_stat_bytes = (int)(g_op - g_out);
+    g_stat_changed = changed;
+    g_stat_cells = g_rows * g_cols;
     memcpy(g_front, g_back, sizeof g_front);
     g_full = 0;
 }

@@ -58,6 +58,7 @@ static const float BODY_COL[2][2][3] = {
     { { 0.26f, 0.22f, 0.36f }, { 0.85f, 0.42f, 0.17f } },
     { { 0.18f, 0.34f, 0.30f }, { 0.95f, 0.78f, 0.30f } },
 };
+static const float GUIDE_COL[2][3] = { { 0.55f, 1.00f, 1.05f }, { 0.95f, 1.05f, 1.10f } };   /* hint guide: pale glowing cyan */
 
 /* ---------- 화면 광선 추적 ---------- */
 
@@ -358,8 +359,12 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
             if (tp < texit) {                                                    /* 플레이어 몸 */
                 float hx = ox + dx * tp, hy = oy + dy * tp, hz = oz + dz * tp, lr, lg, lb;
                 surface_light(hx + pnx * 0.02f, hy + pny * 0.02f, hz + pnz * 0.02f, pnx, pny, pnz, &lr, &lg, &lb);
-                const float *col = BODY_COL[pwho & 1][phead];
-                layer(&acc, col[0] * lr * 255, col[1] * lg * 255, col[2] * lb * 255, 1);
+                const float *col = pwho == BODY_GUIDE ? GUIDE_COL[phead] : BODY_COL[pwho & 1][phead];
+                if (pwho == BODY_GUIDE) {                                        /* the guide glows on its own */
+                    float rim = 1 - fabsf(pnx * dx + pny * dy + pnz * dz);           /* brighter toward the silhouette */
+                    layer(&acc, col[0] * lr * 150 + 50 + 120 * rim, col[1] * lg * 150 + 120 + 110 * rim, col[2] * lb * 150 + 130 + 110 * rim, 1);
+                } else
+                    layer(&acc, col[0] * lr * 255, col[1] * lg * 255, col[2] * lb * 255, 1);
                 thit = tp;
                 *zdep = tp * (dx * F->fx + dy * F->fy + dz * F->fz);
                 *id = (uint16_t)(99 - pwho);

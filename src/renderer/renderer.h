@@ -32,6 +32,15 @@ typedef struct {
 /* 그린 결과. 위에서부터 H줄, 왼쪽부터 W칸을 쓴다 (0xRRGGBB) */
 extern uint32_t g_pix[PIX_H][PIX_W];
 
+/* timings of the last renderer_draw, for the performance overlay */
+typedef struct {
+    int nthreads, W, H;                       /* threads and the pixel size that was drawn */
+    float frame_ms;                           /* whole renderer_draw */
+    float work_ms[MAX_THREADS];               /* per thread: tracing its rows + edge resampling */
+    float wait_ms[MAX_THREADS];               /* per thread: idle at the middle barrier */
+} RenderStats;
+const RenderStats *renderer_stats(void);
+
 int renderer_init(void);              /* 작업 스레드를 만들고 쓰는 스레드 수를 돌려준다 */
 void renderer_shutdown(void);         /* 작업 스레드를 끝내고 기다린다 */
 

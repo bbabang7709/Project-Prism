@@ -14,4 +14,6 @@
 typedef struct { float x0, z0, x1, z1, r, g, b; } Seg;
 typedef struct { float x, z; int who; float y; } Body;
 
+#define BODY_GUIDE 2                    /* Body.who of the hint guide (drawn only, never blocks light) */
+
 #endif

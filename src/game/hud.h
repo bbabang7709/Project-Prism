@@ -7,6 +7,8 @@
 
 void hud_draw(int frame, int fps, const char *net);   /* net: 네트워크 상태 글 (혼자면 NULL) */
 void hud_toggle_help(void);
+void hud_toggle_perf(void);             /* P: performance overlay (render threads, light, terminal output) */
+void hud_set_autores(int on);           /* dynamic resolution on/off (--full-res turns it off) */
 
 /* 화면 방식: 1이면 터미널 한 칸에 2×2 픽셀(사분 블록 ▘▝▖▗ 등), 0이면 1×2 픽셀(반블록 ▀) */
 int hud_quad(void);

@@ -507,6 +507,9 @@ void net_send_action(int act)
     if (send_msg(s_peer.fd, M_ACTION, &w) < 0) drop_peer("호스트와 연결이 끊어졌어요");
 }
 
+/* host: the room was rebuilt (level files reloaded), send it again even if its number is the same */
+void net_level_changed(void) { s_sent_level = -1; }
+
 const char *net_status(void)
 {
     if (s_mode == NET_HOST)

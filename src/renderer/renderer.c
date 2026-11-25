@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "platform/clock.h"
 #include "renderer/raycast.h"
 
 /* ---------- 스레드 ---------- */
@@ -15,15 +16,24 @@ static int g_nthreads = 1;
 static pthread_barrier_t g_go, g_mid, g_done;
 static volatile int g_wquit;
 static pthread_t g_tid[MAX_THREADS];
+static RenderStats g_stats;             /* timings of the last frame (each thread writes only its own slot) */
 
 /* 한 프레임: 모든 스레드가 자기 줄을 그린 뒤(g_mid에서 다 같이 기다림),
  * 이웃 줄까지 다 그려진 상태에서 경계 픽셀을 다시 쏘아 매끄럽게 한다 */
 static void render_rows(int id)
 {
+    int64_t t0 = now_us();
     raycast_rows(id, g_nthreads);
+    int64_t t1 = now_us();
     pthread_barrier_wait(&g_mid);
+    int64_t t2 = now_us();
     raycast_aa_rows(id, g_nthreads);
+    int64_t t3 = now_us();
+    g_stats.work_ms[id] = (float)((t1 - t0) + (t3 - t2)) / 1000.0f;   /* tracing rows + edge resampling */
+    g_stats.wait_ms[id] = (float)(t2 - t1) / 1000.0f;                 /* idle at the barrier: load imbalance */
 }
+
+const RenderStats *renderer_stats(void) { return &g_stats; }
 
 static void *worker(void *arg)
 {
@@ -42,6 +52,7 @@ int renderer_init(void)
     int nthreads = (int)sysconf(_SC_NPROCESSORS_ONLN);
     nthreads = nthreads < 1 ? 1 : nthreads > MAX_THREADS ? MAX_THREADS : nthreads;
     g_nthreads = nthreads;
+    g_stats.nthreads = nthreads;
     pthread_barrier_init(&g_go, NULL, (unsigned)nthreads);
     pthread_barrier_init(&g_mid, NULL, (unsigned)nthreads);
     pthread_barrier_init(&g_done, NULL, (unsigned)nthreads);
@@ -81,10 +92,10 @@ static void post_pass(int W, int H, int sel_id, int frame)
             float far = fmaxf(fmaxf(zl, zr), fmaxf(zu, zd));
             /* 물체와 사람(id 98 이상)은 진한 윤곽선으로 배경과 확실히 떼어 놓고,
              * 벽과 바닥의 윤곽선은 옅게 해서 물체가 먼저 눈에 들어오게 한다 */
-            int thing = id >= 98;
+            int thing = id >= 97;                                 /* 97..99: guide and players, 100+: objects */
             if (lap > iz * 0.15f && far > z * 1.04f) g_pix[j][i] = scale_c(g_pix[j][i], thing ? 0.35f : 0.62f);
             else if (g_id[j][i + 1] != id || g_id[j + 1][i] != id || g_id[j][i - 1] != id || g_id[j - 1][i] != id) {
-                int nthing = g_id[j][i + 1] >= 98 || g_id[j + 1][i] >= 98 || g_id[j][i - 1] >= 98 || g_id[j - 1][i] >= 98;
+                int nthing = g_id[j][i + 1] >= 97 || g_id[j + 1][i] >= 97 || g_id[j][i - 1] >= 97 || g_id[j - 1][i] >= 97;
                 if (thing) g_pix[j][i] = scale_c(g_pix[j][i], 0.45f);     /* 물체 테두리 안쪽 */
                 else if (!nthing && (g_id[j][i + 1] != id || g_id[j + 1][i] != id)) g_pix[j][i] = scale_c(g_pix[j][i], 0.86f);
             }
@@ -136,11 +147,15 @@ static void setup_frame(const View *v, int W, int H, int frame)
 
 void renderer_draw(const View *v, int W, int H, int frame)
 {
+    int64_t t0 = now_us();
     setup_frame(v, W, H, frame);
     pthread_barrier_wait(&g_go);
     render_rows(0);
     pthread_barrier_wait(&g_done);
     post_pass(W, H, v->sel_obj >= 0 ? 101 + v->sel_obj : 0, frame);
+    g_stats.frame_ms = (float)(now_us() - t0) / 1000.0f;
+    g_stats.W = W;
+    g_stats.H = H;
 }
 
 void renderer_write_ppm(const char *path, int W, int H, int scale)

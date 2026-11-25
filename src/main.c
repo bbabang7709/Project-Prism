@@ -17,6 +17,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/inotify.h>
+#include <sys/stat.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
 
@@ -41,6 +45,8 @@ static int s_look = 1;                  /* V: 마우스로 시선 돌리기 (마
 static const char *s_level_dir;         /* --levels */
 static int s_port = NET_PORT;           /* 메뉴에서 호스트로 시작할 때의 포트 */
 static int s_frame;
+static uint64_t s_level_sig;            /* fingerprint of the level folder at the last load (hot reload) */
+static uint64_t levels_signature(const char *dir);
 
 /* ---------- 방 파일 ---------- */
 
@@ -77,6 +83,7 @@ static int load_levels(const char *dir)
 static void prepare_levels(int solo)
 {
     load_levels(s_level_dir);                             /* 시작할 때 한 번 확인했으므로 실패하지 않는다 */
+    s_level_sig = levels_signature(g_level_dir);          /* hot reload compares against this */
     if (solo) world_drop_coop();
 }
 
@@ -128,6 +135,97 @@ static void start_join(const char *addr)
     game_reset();
     if (net_join(addr, err, sizeof err) < 0) { go_menu(err); return; }
     s_ui = UI_PLAY;
+}
+
+/* ---------- level hot reload (inotify + mtime fallback) ---------- */
+
+/*
+ * Editing a .lvl file while playing rebuilds the room at once.
+ * inotify reports writes made inside Linux; WSL's /mnt drives do not report
+ * writes made by Windows programs, so a once-a-second fingerprint of the
+ * files' names, sizes and modification times catches those too.
+ */
+static int s_ifd = -1;                  /* inotify descriptor (-1: not watching) */
+static int64_t s_reload_at;             /* when to reload (ms), 0 = nothing pending */
+
+static uint64_t levels_signature(const char *dir)
+{
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    uint64_t sum = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        size_t l = strlen(e->d_name);
+        struct stat st;
+        if (l < 5 || strcmp(e->d_name + l - 4, ".lvl") || fstatat(dirfd(d), e->d_name, &st, 0) != 0) continue;
+        uint64_t h = 1469598103934665603ULL;                 /* FNV-1a of the name, mixed with size and mtime */
+        for (size_t i = 0; i < l; i++) h = (h ^ (unsigned char)e->d_name[i]) * 1099511628211ULL;
+        h ^= (uint64_t)st.st_size * 0x9E3779B97F4A7C15ULL;
+        h ^= ((uint64_t)st.st_mtim.tv_sec * 1000000000ULL + (uint64_t)st.st_mtim.tv_nsec) * 0xC2B2AE3D27D4EB4FULL;
+        sum += h;                                            /* order independent */
+    }
+    closedir(d);
+    return sum;
+}
+
+static void watch_levels(void)
+{
+    s_level_sig = levels_signature(g_level_dir);
+    if (s_ifd >= 0) return;
+    s_ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (s_ifd >= 0 && inotify_add_watch(s_ifd, g_level_dir, IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_DELETE | IN_CREATE) < 0) {
+        close(s_ifd);                                        /* no level folder (built-in room): nothing to watch */
+        s_ifd = -1;
+    }
+}
+
+/* drain inotify events; any change to a .lvl file schedules a reload shortly after (editors write in bursts) */
+static void on_level_events(int64_t now)
+{
+    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    ssize_t n;
+    while ((n = read(s_ifd, buf, sizeof buf)) > 0)
+        for (char *p = buf; p < buf + n; p += sizeof(struct inotify_event) + ((struct inotify_event *)p)->len) {
+            const struct inotify_event *ev = (const struct inotify_event *)p;
+            size_t l = ev->len ? strlen(ev->name) : 0;
+            if (l >= 5 && !strcmp(ev->name + l - 4, ".lvl")) s_reload_at = now + 150;
+        }
+}
+
+/* Reload the level files. On a parse error keep the old rooms and show the error.
+ * Only while playing solo or hosting; the editor and joiners pick changes up on their next start. */
+static void reload_levels(void)
+{
+    static Level old[MAXLEVEL];
+    char err[512], file[64];
+    int old_n = g_nlevels, old_cur = g_cur_level;
+    s_level_sig = levels_signature(g_level_dir);
+    if (s_ui != UI_PLAY || s_testing || net_mode() == NET_CLIENT) return;
+    memcpy(old, g_levels, sizeof old);
+    snprintf(file, sizeof file, "%s", g_levels[g_cur_level].file);
+    int n = world_load_levels(g_level_dir, err, sizeof err);
+    if (n <= 0) {
+        memcpy(g_levels, old, sizeof old);
+        g_nlevels = old_n;
+        if (n == 0) snprintf(err, sizeof err, "%s: 방 파일(.lvl)이 없습니다", g_level_dir);
+        game_message(g_me, "방 파일 오류, 이전 방을 그대로 써요: %.200s", err);
+        return;
+    }
+    if (net_mode() == NET_OFF) world_drop_coop();
+    int idx = -1;
+    for (int i = 0; i < g_nlevels; i++)
+        if (file[0] && !strcmp(g_levels[i].file, file)) idx = i;
+    if (idx < 0) idx = old_cur < g_nlevels ? old_cur : g_nlevels - 1;
+    if (memcmp(&old[old_cur], &g_levels[idx], sizeof(Level)) == 0) {   /* another file changed: keep playing */
+        g_cur_level = idx;
+        game_message(g_me, "방 목록을 다시 읽었어요 (%d개)", g_nlevels);
+        return;
+    }
+    for (int i = 0; i < MAXPLAYER; i++) { g_pl[i].carry = -1; g_pl[i].hint_t = 0; }
+    game_init(idx);                                       /* rebuild the room from the new file */
+    game_find_target(g_me);
+    if (net_mode() == NET_HOST) net_level_changed();
+    game_message(-1, "방 파일이 바뀌어 다시 만들었어요: %s", g_levels[idx].name);
 }
 
 /* ---------- 입력 사건 연결 ---------- */
@@ -200,6 +298,7 @@ static void on_press(int vk)
     if (s_testing && (vk == VK_ESC || (g_cleared && vk == VK_ENTER))) back_to_editor();
     else if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
     else if (vk == 'H') hud_toggle_help();
+    else if (vk == 'P') hud_toggle_perf();
     else if (vk == 'V' && !bridge_connected())            /* nothing to toggle without the Windows mouse helper */
         game_message(g_me, "마우스 시선은 Windows에서 mouselock 도우미를 실행했을 때만 쓸 수 있어요");
     else if (vk == 'V') {                                 /* 마우스 시선 켜기/끄기 (포인터 잠금도 같이) */
@@ -249,7 +348,7 @@ static void mouse_look_update(void)
 int main(int argc, char **argv)
 {
     int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1, level_set = 0, host_port = 0, shot_w = PIX_W, shot_h = PIX_H;
-    int term_cols = 0, term_rows = 0;
+    int term_cols = 0, term_rows = 0, guide_ticks = -1;
     float fx = 0, fz = 0, fyaw = 0, fpitch = 0;
     const char *shot = NULL, *join = NULL;
     for (int i = 1; i < argc; i++) {
@@ -264,6 +363,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--level") && i + 1 < argc) { level = atoi(argv[++i]); level_set = 1; }
         else if (!strcmp(argv[i], "--levels") && i + 1 < argc) s_level_dir = argv[++i];
         else if (!strcmp(argv[i], "--halfblock")) hud_set_quad(0);
+        else if (!strcmp(argv[i], "--full-res")) hud_set_autores(0);   /* no dynamic resolution (benchmarks) */
+        else if (!strcmp(argv[i], "--guide") && i + 1 < argc) guide_ticks = atoi(argv[++i]);   /* dev: hint, then simulate n ticks */
         else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* 개발용: 터미널 화면 미리보기 PNG */
             shot = argv[++i];
             term_cols = atoi(argv[++i]); term_rows = atoi(argv[++i]);
@@ -288,7 +389,7 @@ int main(int argc, char **argv)
             if (i + 2 < argc && argv[i + 1][0] != '-') { cam_yaw = cam_yaw_target = strtof(argv[++i], NULL); cam_pitch = strtof(argv[++i], NULL); }
             if (i + 1 < argc && argv[i + 1][0] != '-') cam_dist = strtof(argv[++i], NULL);
         } else {
-            fprintf(stderr, "usage: %s [--host [port] | --join addr[:port]] [--levels dir] [--level n] [--halfblock]\n"
+            fprintf(stderr, "usage: %s [--host [port] | --join addr[:port]] [--levels dir] [--level n] [--halfblock] [--full-res]\n"
                             "       %*s [--check] [--solve] [--shot file.ppm|file.png [yaw pitch [dist]]] [--size w h] [--fp x z yaw pitch] [--select n]\n"
                             "       %*s [--term-shot file.png cols rows]\n"
                             "       옵션 없이 실행하면 시작 메뉴가 열립니다\n",
@@ -326,6 +427,11 @@ int main(int argc, char **argv)
             if (check) game_print_state(ok ? "solved" : "no solution found");
         }
         game_find_target(0);
+        if (guide_ticks >= 0) {                           /* show the hint guide walking toward its target */
+            game_action(0, ACT_HINT);
+            for (int t = 0; t < guide_ticks; t++) game_tick(1.0f / 30);
+            if (check) printf("hint: %s\n", p0->msg);
+        }
         if (sel >= 0 && sel < g_nobj) p0->tobj = sel;
         if (shot && term_cols) {                          /* 터미널 화면 미리보기: 칸으로 옮긴 결과를 블록 모양 그대로 그린다 */
             g_cols = term_cols;
@@ -391,11 +497,14 @@ int main(int argc, char **argv)
         go_menu(NULL);                                    /* 옵션 없이 실행: 시작 메뉴 */
     int64_t fps_t0 = now;
     int fps = 0, fps_n = 0;
-    struct pollfd pf[4] = { { STDIN_FILENO, POLLIN, 0 }, { tfd, POLLIN, 0 } };
+    watch_levels();                                       /* hot reload: inotify on the level folder */
+    int64_t sig_check = now;
+    /* poll set: stdin, game timer, inotify (fd -1 is ignored by poll), then up to two sockets */
+    struct pollfd pf[5] = { { STDIN_FILENO, POLLIN, 0 }, { tfd, POLLIN, 0 }, { s_ifd, POLLIN, 0 } };
     while (!g_quit) {
         if (g_resize) { g_resize = 0; term_get_size(); }
-        int nnet = net_pollfds(pf + 2, 2);
-        if (poll(pf, (nfds_t)(2 + nnet), -1) < 0) {
+        int nnet = net_pollfds(pf + 3, 2);
+        if (poll(pf, (nfds_t)(3 + nnet), -1) < 0) {
             if (errno == EINTR) continue;
             break;
         }
@@ -403,8 +512,14 @@ int main(int argc, char **argv)
         input_set_time(now);
         if (pf[0].revents & POLLIN) input_read();
         if (input_esc_expired()) on_press(VK_ESC);        /* ESC 키 단독 */
+        if (pf[2].revents & POLLIN) on_level_events(now);
+        if (now - sig_check >= 1000) {                    /* fallback for edits inotify cannot see */
+            sig_check = now;
+            if (!s_reload_at && levels_signature(g_level_dir) != s_level_sig) s_reload_at = now;
+        }
+        if (s_reload_at && now >= s_reload_at) { s_reload_at = 0; reload_levels(); }
         mouse_look_update();                              /* 마우스 잠금 도우미: 시선과 포인터 잠금 */
-        net_handle(pf + 2, nnet);                         /* 접속 받기, 받은 메시지 처리 */
+        net_handle(pf + 3, nnet);                         /* 접속 받기, 받은 메시지 처리 */
         if (net_lost()) {                                 /* 호스트와 끊어졌다: 이유를 보여 주며 메뉴로 */
             char why[160];
             snprintf(why, sizeof why, "%s", net_lost());
@@ -434,5 +549,6 @@ int main(int argc, char **argv)
     net_close();
     renderer_shutdown();
     close(tfd);
+    if (s_ifd >= 0) close(s_ifd);
     return 0;
 }

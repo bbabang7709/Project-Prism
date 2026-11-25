@@ -23,6 +23,7 @@ void term_restore(void);
 void term_install_signals(void);          /* SIGINT/TERM/HUP → g_quit, SIGWINCH → g_resize */
 void term_get_size(void);                 /* 창 크기를 읽고 다음 출력은 전체 다시 그리기 */
 void term_present(void);                  /* g_back을 화면에 내보낸다 (바뀐 칸만) */
+void term_stats(int *bytes, int *changed, int *cells);   /* last term_present: bytes written, cells sent, cells on screen */
 
 /* (x, y) 칸부터 글자를 쓰고 쓴 너비(칸)를 돌려준다 */
 int term_text(int x, int y, uint32_t fg, uint32_t bg, const char *fmt, ...)

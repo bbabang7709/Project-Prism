@@ -60,6 +60,7 @@ void game_reset(void);                  /* 새 게임: 플레이어, 카메라, 
 
 void game_init(int level);              /* level번 방(0부터)을 만들고 플레이어 0을 시작 칸에 세워 빛을 계산한다 */
 void game_simulate(void);               /* 빛 계산 → 문 갱신 */
+extern int g_sim_us;                    /* time of the last game_simulate (light + plates + door), microseconds */
 int game_solve(void);                   /* 거울 각도를 모두 시험해 푸는 방법을 찾는다 */
 void game_solve_setup(void);            /* 풀이 확인 전에 방 파일의 stand(누가 서 있음)·move(물체 옮김)를 적용한다 */
 void game_find_target(int p);           /* p번 플레이어가 겨누는 물체와 놓을 칸을 다시 구한다 */

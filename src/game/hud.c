@@ -14,6 +14,89 @@ static int g_help = 1;                  /* 아래쪽 도움말 줄 보이기 */
 static int g_quad = 1;                  /* 1: 한 칸에 2×2 픽셀(사분 블록), 0: 1×2 픽셀(반블록) */
 
 void hud_toggle_help(void) { g_help = !g_help; }
+
+/* ---------- performance overlay and dynamic resolution ---------- */
+
+static int g_perf;                      /* P: show the performance overlay */
+static int g_autores = 1;               /* lower the render resolution when frames get slow */
+static const float RES_STEP[] = { 1.0f, 0.85f, 0.7f, 0.55f };
+#define NRES ((int)(sizeof RES_STEP / sizeof RES_STEP[0]))
+static int s_res = 0;                   /* index into RES_STEP */
+static float s_ema = 0;                 /* smoothed render time (ms) */
+static int s_cool = 0;                  /* frames to wait before changing the resolution again */
+static uint32_t s_up[PIX_H][PIX_W];     /* upscale scratch */
+
+void hud_toggle_perf(void) { g_perf = !g_perf; }
+void hud_set_autores(int on) { g_autores = on; if (!on) s_res = 0; }
+
+/*
+ * Keep 30 fps on slow machines or huge windows: the frame budget is 33 ms and the
+ * terminal output needs part of it, so aim for about 18 ms of rendering.
+ * Too slow for a while -> render fewer pixels; plenty of headroom -> go back up.
+ */
+static void autores_update(float ms)
+{
+    s_ema = s_ema == 0 ? ms : s_ema * 0.9f + ms * 0.1f;
+    if (!g_autores) return;
+    if (s_cool > 0) { s_cool--; return; }
+    float k = RES_STEP[s_res] * RES_STEP[s_res];          /* render time scales with the pixel count */
+    if (s_ema > 22 && s_res < NRES - 1) { s_res++; s_ema *= RES_STEP[s_res] * RES_STEP[s_res] / k; s_cool = 15; }
+    else if (s_res > 0 && s_ema * RES_STEP[s_res - 1] * RES_STEP[s_res - 1] / k < 12) { s_res--; s_ema *= RES_STEP[s_res] * RES_STEP[s_res] / k; s_cool = 60; }
+}
+
+/* bilinear upscale of g_pix (sw x sh) to W x H, in place through s_up */
+static void upscale(int sw, int sh, int W, int H)
+{
+    for (int y = 0; y < H; y++) {
+        float fy = ((float)y + 0.5f) * (float)sh / (float)H - 0.5f;
+        int y0 = fy < 0 ? 0 : (int)fy, y1 = y0 + 1 < sh ? y0 + 1 : sh - 1;
+        int wy = (int)((fy - (float)y0) * 256);
+        wy = wy < 0 ? 0 : wy > 256 ? 256 : wy;
+        int iwy = 256 - wy;
+        for (int x = 0; x < W; x++) {
+            float fx = ((float)x + 0.5f) * (float)sw / (float)W - 0.5f;
+            int x0 = fx < 0 ? 0 : (int)fx, x1 = x0 + 1 < sw ? x0 + 1 : sw - 1;
+            int wx = (int)((fx - (float)x0) * 256);
+            wx = wx < 0 ? 0 : wx > 256 ? 256 : wx;
+            int iwx = 256 - wx;
+            uint32_t a = g_pix[y0][x0], b = g_pix[y0][x1], c = g_pix[y1][x0], d = g_pix[y1][x1], out = 0;
+            for (int s = 0; s < 24; s += 8) {
+                int v = ((int)(a >> s & 255) * iwx + (int)(b >> s & 255) * wx) * iwy + ((int)(c >> s & 255) * iwx + (int)(d >> s & 255) * wx) * wy;
+                out |= (uint32_t)(v >> 16) << s;
+            }
+            s_up[y][x] = out;
+        }
+    }
+    for (int y = 0; y < H; y++) memcpy(g_pix[y], s_up[y], sizeof(uint32_t) * (size_t)W);
+}
+
+/* the overlay: what the engine spends each frame on, drawn over the top-left of the view */
+static void draw_perf(int fps)
+{
+    const RenderStats *rs = renderer_stats();
+    int bytes, changed, cells;
+    term_stats(&bytes, &changed, &cells);
+    char line[160];
+    int y = 3, n = rs->nthreads, rows = 6 + (n + 3) / 4;   /* row 2 is for messages */
+    uint32_t bg = 0x14161E, fg = 0xD8DCE8, dim = 0x8A90A0;
+    for (int r = y; r < y + rows && r < g_rows - 3; r++)
+        for (int c = 0; c < 58 && c < g_cols; c++) g_back[r][c] = (VCell){ fg, bg, " ", 0 };
+    term_text(1, y++, 0xFFD27A, bg, "성능  (P 닫기)   %d fps, 틱 33.3ms", fps);
+    snprintf(line, sizeof line, "렌더 %.1fms  %d×%d 픽셀  해상도 %d%%%s", rs->frame_ms, rs->W, rs->H,
+             (int)(RES_STEP[s_res] * 100 + 0.5f), g_autores ? " (자동)" : "");
+    term_text(1, y++, fg, bg, "%s", line);
+    term_text(1, y++, dim, bg, "스레드 %d개   작업 / 바리어 대기 (ms)", n);
+    for (int i = 0; i < n; i += 4) {
+        int x = 2;
+        for (int k = i; k < i + 4 && k < n; k++)
+            x += term_text(x, y, fg, bg, "#%d %4.1f/%-4.1f  ", k, rs->work_ms[k], rs->wait_ms[k]);
+        y++;
+    }
+    term_text(1, y++, fg, bg, "빛 계산 %.2fms  (빛줄기 %d개)", g_sim_us / 1000.0f, g_nseg);
+    int full = changed > 0 ? (int)((long long)bytes * cells / changed) : bytes;
+    term_text(1, y++, fg, bg, "출력 %.1fKB  바뀐 칸 %d/%d (%d%%)", bytes / 1024.0f, changed, cells, cells ? changed * 100 / cells : 0);
+    term_text(1, y++, dim, bg, "전체를 다시 그리면 약 %.0fKB → %d%% 아낌", full / 1024.0f, full ? 100 - bytes * 100 / full : 0);
+}
 int hud_quad(void) { return g_quad; }
 void hud_set_quad(int on) { g_quad = on; }
 
@@ -110,7 +193,11 @@ void hud_draw(int frame, int fps, const char *net)
     View view;
     game_view(&view);
     hud_frame_size(&W, &H, &view.paspect);
-    renderer_draw(&view, W, H, frame);
+    int rw = (int)((float)W * RES_STEP[s_res]), rh = (int)((float)H * RES_STEP[s_res]);
+    if (rw < 16 || rh < 16) { rw = W; rh = H; }
+    renderer_draw(&view, rw, rh, frame);                  /* fewer pixels when dynamic resolution stepped down */
+    autores_update(renderer_stats()->frame_ms);
+    if (rw != W || rh != H) upscale(rw, rh, W, H);
     if (me->fp) {                                           /* 조준점 (가로 픽셀이 좁으면 가로로 더 길게) */
         int cx = W / 2, cy = H / 2, kx = g_quad ? 4 : 2;
         for (int k = -kx; k <= kx; k++) g_pix[cy][cx + k] = k ? 0xE8E8E8 : 0xFFFFFF;
@@ -146,6 +233,7 @@ void hud_draw(int frame, int fps, const char *net)
                                           : "F 들기/놓기   Q/E·휠 돌리기   Tab 내려다보기   Z 되돌리기   I 힌트   R 처음부터   H 도움말   G 화면   ESC 메뉴")
                     : "←→ 카메라   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   Z 되돌리기   I 힌트   R 처음부터   ESC 메뉴");
     }
+    if (g_perf) draw_perf(fps);
     if (me->msg_t > 0) term_text(g_cols / 2 - term_str_w(me->msg) / 2 - 1, 2, g_solved ? 0x101010 : 0xFFFFFF, g_solved ? 0x7CE07C : 0x2A2F3C, " %s ", me->msg);
     if (g_cleared) {                                      /* 끝 화면: 기록과 안내 */
         int bw = 46, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - 4;

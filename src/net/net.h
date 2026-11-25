@@ -42,6 +42,9 @@ void net_handle(const struct pollfd *pf, int n);
 /* 틱이 끝난 뒤: 호스트는 상태를, 참가자는 키를 보낸다 */
 void net_after_tick(void);
 
+/* host: the current room was rebuilt from changed level files; resend it */
+void net_level_changed(void);
+
 /* 참가자: 조작을 호스트로 보낸다 */
 void net_send_action(int act);
 

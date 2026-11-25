@@ -55,8 +55,11 @@ void world_use_builtin(void)
 
 /* ---------- 방 파일 읽기 ---------- */
 
-static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYOTKh";
-static const char OBJ_CHARS[] = "EPMSbrRGBYOTK";
+static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYCVOTKh";
+static const char OBJ_CHARS[] = "EPMSbrRGBYCVOTK";
+
+/* crystals: R G B Y, plus C (cyan = green + blue) and V (violet/magenta = red + blue) */
+static int is_crystal(char c) { return c && strchr("RGBYCV", c) != NULL; }
 
 static int fail(char *err, size_t errlen, const char *file, int line, const char *fmt, ...)
 {
@@ -118,7 +121,7 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
                 if (strchr(OBJ_CHARS, line[x])) {
                     nobj++;
                     nemit += line[x] == 'E';
-                    ncrystal += line[x] == 'R' || line[x] == 'G' || line[x] == 'B' || line[x] == 'Y';
+                    ncrystal += is_crystal(line[x]);
                     nportal += line[x] == 'T';
                 }
             }
@@ -273,7 +276,7 @@ int world_check_level(const Level *lv, char *err, size_t errlen)
             if (strchr(OBJ_CHARS, c)) {
                 nobj++;
                 nemit += c == 'E';
-                ncrystal += c == 'R' || c == 'G' || c == 'B' || c == 'Y';
+                ncrystal += is_crystal(c);
                 nportal += c == 'T';
             }
         }
@@ -424,6 +427,8 @@ void load_level(void)
             case 'G': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 1, 0); break;
             case 'B': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 0, 1); break;
             case 'Y': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 1, 0); break;
+            case 'C': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 1, 1); break;   /* cyan: green + blue */
+            case 'V': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 0, 1); break;   /* magenta: red + blue */
             case 'O': {                                   /* col: 켜졌을 때 표시 색 (연결 번호마다 다르다) */
                 const float *c = CHAN_COL[lv->chan[z][x] & 3];
                 add_obj(O_SENSOR, x, z, rot, 0, c[0], c[1], c[2]);
