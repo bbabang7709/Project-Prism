@@ -118,12 +118,12 @@ static void box(int x0, int y0, int w, int h, uint32_t bg)
 static void draw_help(int x0, int y0, int w)
 {
     static const char *LINES[] = {
-        "W A S D        걷기",
+        "W A S D        걷기 (Shift를 누르고 있으면 달리기)",
+        "Space          점프",
         "방향키          시선 (내려다보기: ←→ 카메라, ↑↓ 기울기)",
         "F / 클릭       물체 들기, 빈 바닥에 내려놓기",
         "Q E / 휠       겨눈 거울을 22.5도씩 돌리기",
-        "Tab            1인칭 ↔ 내려다보기",
-        "+ -            내려다보기 확대·축소",
+        "Tab / + -      1인칭 ↔ 내려다보기 / 내려다보기 확대·축소",
         "Z / R / I      되돌리기 / 방을 처음 상태로 / 힌트",
         "V              마우스 시선 켜기/끄기 (mouselock 도우미)",
         "H / G          도움말 줄 숨기기 / 화면 방식 (2×2 ↔ 반블록)",

@@ -73,7 +73,12 @@ static void plain_char(int c)
     else if (c == '\r' || c == '\n') key_tap(VK_ENTER);
     else if (c == 127 || c == 8) key_tap(VK_BACK);
     else if (c >= 'a' && c <= 'z') key_tap(c - 32);
-    else if (c >= 'A' && c <= 'Z') key_tap(c);
+    else if (c >= 'A' && c <= 'Z') {
+        /* a plain terminal never reports Shift alone: Shift+W arrives as 'W', so treat it as running */
+        if (c == 'W' || c == 'A' || c == 'S' || c == 'D') key_tap(VK_SHIFT);
+        key_tap(c);
+    }
+    else if (c == ' ') key_tap(VK_SPACE);
     else if (c == '\t') key_tap(VK_TAB);
     else if (c == '+' || c == '=') key_tap(VK_PLUS);
     else if (c == '-' || c == '_') key_tap(VK_MINUS);

@@ -27,7 +27,7 @@ typedef struct {
 
 /* 이번 프레임의 빛줄기 선분과 그릴 플레이어 몸들을 복사해 둔다.
  * 메인 스레드가 작업 스레드를 깨우기(바리어) 전에 부른다. */
-void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody);
+void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody, float cam_y);
 
 static inline uint32_t pack(float r, float g, float b)
 {

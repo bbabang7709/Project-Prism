@@ -17,14 +17,21 @@
 #define MAXPLAYER 2
 
 /* 누르고 있는 키 (Player.keys) */
-enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_LEFT = 16, K_RIGHT = 32, K_UP = 64, K_DOWN = 128 };
+enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_LEFT = 16, K_RIGHT = 32, K_UP = 64, K_DOWN = 128, K_RUN = 256 };
 
-/* 조작 (네트워크로 보내는 단위이기도 하다) */
-enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO, ACT_HINT };
+/* 조작 (네트워크로 보내는 단위이기도 하다). ACT_JUMP is not counted as a move */
+enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO, ACT_HINT, ACT_JUMP };
+
+#define WALK_SPEED 3.0f                 /* cells per second */
+#define RUN_SPEED  5.0f                 /* while K_RUN (Shift) is held */
+#define JUMP_V     4.2f                 /* take-off speed: 0.56 cells high, 0.53 s in the air */
+#define GRAVITY    15.75f
+#define JUMP_MAX   1.0f                 /* largest height accepted from the network */
 
 typedef struct {
     int on;                             /* 이 자리에 플레이어가 있다 */
     float x, z, yaw, pitch;             /* 위치와 시선 */
+    float y, vy;                        /* jump height above the floor and vertical speed */
     int fp;                             /* 1: 1인칭, 0: 내려다보기 (겨누기 방식이 다르다) */
     float walk_yaw;                     /* 내려다보기에서 걷는 방향의 기준 (그 사람의 카메라 각도) */
     unsigned keys;                      /* 누르고 있는 키 K_* */

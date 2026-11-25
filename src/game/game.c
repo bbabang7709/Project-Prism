@@ -110,7 +110,7 @@ void game_simulate(void)
     Body b[MAXPLAYER];
     int n = 0;
     for (int i = 0; i < MAXPLAYER; i++)
-        if (g_pl[i].on) b[n++] = (Body){ g_pl[i].x, g_pl[i].z, i };
+        if (g_pl[i].on) b[n++] = (Body){ g_pl[i].x, g_pl[i].z, i, g_pl[i].y };
     for (int pass = 0; pass < 4; pass++) {
         unsigned before = sensor_mask(NULL);
         update_plates();
@@ -136,6 +136,7 @@ static void place_player(int p)
     Player *pl = &g_pl[p];
     pl->x = (float)x + 0.5f;
     pl->z = (float)z + 0.5f;
+    pl->y = pl->vy = 0;                                   /* land on the start cell */
     pl->yaw = face == 'E' ? PI / 2 : face == 'W' ? -PI / 2 : face == 'N' ? PI : 0;
     pl->pitch = -0.35f;
     pl->carry = -1;
@@ -310,7 +311,7 @@ void game_find_target(int p)
     pl->tx = pl->tz = -1;
     if (pl->fp) {
         float cp = cosf(pl->pitch), dx = sinf(pl->yaw) * cp, dy = sinf(pl->pitch), dz = cosf(pl->yaw) * cp;
-        float ox = pl->x, oy = EYE_Y, oz = pl->z;
+        float ox = pl->x, oy = EYE_Y + pl->y, oz = pl->z;
         int x = (int)floorf(ox), y = (int)floorf(oy), z = (int)floorf(oz);
         int sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1, sz = dz > 0 ? 1 : -1;
         float tdx = fabsf(dx) > 1e-6f ? fabsf(1 / dx) : 1e30f, tdy = fabsf(dy) > 1e-6f ? fabsf(1 / dy) : 1e30f,
@@ -499,6 +500,9 @@ void game_action(int p, int act)
     case ACT_RESET: restart_room(); game_message(-1, "처음 상태로 되돌렸어요"); break;
     case ACT_UNDO: undo(p); break;
     case ACT_HINT: hint(p); break;
+    case ACT_JUMP:                                        /* only from the floor; not a puzzle move */
+        if (g_pl[p].y <= 0) g_pl[p].vy = JUMP_V;
+        break;
     }
 }
 
@@ -565,11 +569,12 @@ unsigned game_local_keys(void)
 {
     unsigned k = (input_held('W') ? K_W : 0) | (input_held('A') ? K_A : 0) | (input_held('S') ? K_S : 0) | (input_held('D') ? K_D : 0) |
            (input_held(VK_LEFT) ? K_LEFT : 0) | (input_held(VK_RIGHT) ? K_RIGHT : 0) |
-           (input_held(VK_UP) ? K_UP : 0) | (input_held(VK_DOWN) ? K_DOWN : 0);
+           (input_held(VK_UP) ? K_UP : 0) | (input_held(VK_DOWN) ? K_DOWN : 0) | (input_held(VK_SHIFT) ? K_RUN : 0);
     if (bridge_connected()) {                              /* 도우미가 읽은 실제 키 상태 (창이 맨 앞일 때만 연결로 친다) */
         uint32_t b = bridge_keys();
         k |= (b & KB_W ? K_W : 0) | (b & KB_A ? K_A : 0) | (b & KB_S ? K_S : 0) | (b & KB_D ? K_D : 0) |
-             (b & KB_LEFT ? K_LEFT : 0) | (b & KB_RIGHT ? K_RIGHT : 0) | (b & KB_UP ? K_UP : 0) | (b & KB_DOWN ? K_DOWN : 0);
+             (b & KB_LEFT ? K_LEFT : 0) | (b & KB_RIGHT ? K_RIGHT : 0) | (b & KB_UP ? K_UP : 0) | (b & KB_DOWN ? K_DOWN : 0) |
+             (b & KB_SHIFT ? K_RUN : 0);
     }
     return k;
 }
@@ -592,11 +597,17 @@ static void player_tick(int p, float dt)
         vz = cosf(pl->walk_yaw) * f - sinf(pl->walk_yaw) * s;
         if (vx != 0 || vz != 0) pl->yaw = atan2f(vx, vz);
     }
+    if (pl->y > 0 || pl->vy > 0) {                        /* jump: simple ballistic arc, land on the floor */
+        pl->vy -= GRAVITY * dt;
+        pl->y += pl->vy * dt;
+        if (pl->y <= 0) pl->y = pl->vy = 0;
+    }
     float l = sqrtf(vx * vx + vz * vz);
     if (l > 0) {
         int moved = 0;
-        vx = vx / l * 3.0f * dt;
-        vz = vz / l * 3.0f * dt;
+        float speed = (k & K_RUN) ? RUN_SPEED : WALK_SPEED;
+        vx = vx / l * speed * dt;
+        vz = vz / l * speed * dt;
         if (!circle_hits(p, pl->x + vx, pl->z)) { pl->x += vx; moved = 1; }
         if (!circle_hits(p, pl->x, pl->z + vz)) { pl->z += vz; moved = 1; }
         if (moved) {
@@ -638,14 +649,14 @@ void game_view(View *v)
     const Player *me = &g_pl[g_me];
     int n = 0;
     for (int i = 0; i < MAXPLAYER; i++)                   /* 1인칭에서는 내 몸은 그리지 않는다 */
-        if (g_pl[i].on && !(i == g_me && me->fp)) bodies[n++] = (Body){ g_pl[i].x, g_pl[i].z, i };
+        if (g_pl[i].on && !(i == g_me && me->fp)) bodies[n++] = (Body){ g_pl[i].x, g_pl[i].z, i, g_pl[i].y };
     int tx = me->tx, tz = me->tz, sel = me->tobj;
     if (me->hint_t > 0 && (me->hint_t / 10) % 3 != 0) {   /* 힌트: 물체 테두리와 칸 표시를 깜빡이며 보여 준다 */
         if (me->hint_obj >= 0) sel = me->hint_obj;
         if (me->hint_x >= 0) { tx = me->hint_x; tz = me->hint_z; }
     }
     *v = (View){ me->fp, me->x, me->z, me->yaw, me->pitch, cam_yaw, cam_pitch, cam_dist, tx, tz, sel,
-                 g_seg, g_nseg, bodies, n, 1 };
+                 g_seg, g_nseg, bodies, n, 1, me->y };
 }
 
 void game_print_state(const char *title)

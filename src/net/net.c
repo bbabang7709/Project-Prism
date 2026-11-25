@@ -21,7 +21,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 7                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치), 7: INPUT에 마우스 시선 (참가자가 정한 시선을 호스트가 따른다) */
+#define VERSION 8                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치), 7: INPUT에 마우스 시선 (참가자가 정한 시선을 호스트가 따른다), 8: jump height of each player in STATE */
 #define MAXMSG 2048
 
 typedef struct {
@@ -142,7 +142,7 @@ static int send_state(int fd, int to)
     for (int i = 0; i < MAXPLAYER; i++) {
         const Player *p = &g_pl[i];
         put8(&w, (unsigned)p->on);
-        putf(&w, p->x); putf(&w, p->z); putf(&w, p->yaw); putf(&w, p->pitch);
+        putf(&w, p->x); putf(&w, p->z); putf(&w, p->yaw); putf(&w, p->pitch); putf(&w, p->y);
         put8(&w, (unsigned char)(signed char)p->carry);
         put8(&w, (unsigned char)(signed char)p->tobj);
         put8(&w, (unsigned char)(signed char)p->tx);
@@ -214,7 +214,7 @@ static void apply_state(Rd *r)
         Player *p = &g_pl[i];
         p->on = (int)get8(r);
         float yw, pt;
-        p->x = getf(r); p->z = getf(r); yw = getf(r); pt = getf(r);
+        p->x = getf(r); p->z = getf(r); yw = getf(r); pt = getf(r); p->y = getf(r);
         if (!(i == g_me && g_look_local)) { p->yaw = yw; p->pitch = pt; }   /* 내 시선을 마우스로 정하고 있으면 호스트가 돌려준 값은 쓰지 않는다 */
         p->carry = (signed char)get8(r);
         p->tobj = (signed char)get8(r);
@@ -225,7 +225,7 @@ static void apply_state(Rd *r)
         p->hint_x = (signed char)get8(r);
         p->hint_z = (signed char)get8(r);
         /* 받은 값의 범위를 확인한다: 물체 번호는 화면 표시에서 배열 번호로 쓰고, 좌표는 칸 번호로 바뀐다 */
-        if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(yw) || !finite_f(pt) ||
+        if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(yw) || !finite_f(pt) || !finite_f(p->y) || p->y < 0 || p->y > JUMP_MAX ||
             p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
             p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
             p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD ||

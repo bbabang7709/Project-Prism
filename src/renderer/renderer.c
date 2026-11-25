@@ -110,7 +110,7 @@ static void setup_frame(const View *v, int W, int H, int frame)
     F->rx = cy; F->ry = 0; F->rz = -sy;
     F->ux = -sy * sp; F->uy = cp; F->uz = -cy * sp;
     if (v->fp) {
-        F->ox = v->px; F->oy = EYE_Y; F->oz = v->pz;
+        F->ox = v->px; F->oy = EYE_Y + v->py; F->oz = v->pz;
         F->tanh = 1.0f;                                   /* 90 degree horizontal field of view */
     } else {
         /* 방 가운데를 보되, 카메라 쪽으로 조금 당긴 점을 본다.
@@ -131,7 +131,7 @@ static void setup_frame(const View *v, int W, int H, int frame)
     F->frame = frame;
     F->fp = v->fp;
     F->tx = v->tx; F->tz = v->tz;
-    raycast_prepare(v->seg, v->nseg, v->bodies, v->nbody);
+    raycast_prepare(v->seg, v->nseg, v->bodies, v->nbody, F->oy);
 }
 
 void renderer_draw(const View *v, int W, int H, int frame)

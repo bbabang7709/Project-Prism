@@ -19,15 +19,19 @@ static Seg s_seg[MAXSEG];
 static int s_nseg;
 static Body s_body[MAXBODY];
 static int s_nbody;
+static float s_body_oy[MAXBODY];        /* ray origin height used for each body (camera y minus jump height) */
 static float s_glow[MAXOBJ][6];         /* 주변을 물들이는 새 장치들: x, z, 세기, r, g, b */
 static int s_nglow;
 
-void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody)
+void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody, float cam_y)
 {
     s_nseg = nseg < 0 ? 0 : nseg > MAXSEG ? MAXSEG : nseg;
     memcpy(s_seg, seg, sizeof *seg * (size_t)s_nseg);
     s_nbody = nbody < 0 ? 0 : nbody > MAXBODY ? MAXBODY : nbody;
     memcpy(s_body, body, sizeof *body * (size_t)s_nbody);
+    /* a jumping body is tested by moving the ray origin down by its height, once per frame,
+     * so the per-pixel body test stays exactly the same for bodies on the floor */
+    for (int i = 0; i < s_nbody; i++) s_body_oy[i] = s_body[i].y > 0 ? cam_y - s_body[i].y : cam_y;
     s_nglow = 0;
     for (int i = 0; i < g_nobj; i++) {
         const Obj *o = &g_obj[i];
@@ -254,7 +258,9 @@ static float floor_occlusion(float hx, float hz, int x, int z)
         }
     for (int i = 0; i < s_nbody; i++) {                      /* player bodies, radius 0.2 */
         float ex = hx - s_body[i].x, ez = hz - s_body[i].z;
-        occ += 0.6f * ao_fall(fmaxf(sqrtf(ex * ex + ez * ez) - 0.12f, 0), 0.3f);
+        float sh = 0.6f * ao_fall(fmaxf(sqrtf(ex * ex + ez * ez) - 0.12f, 0), 0.3f);
+        if (s_body[i].y > 0) sh *= fmaxf(0, 1 - s_body[i].y * 1.2f);   /* shadow fades while jumping */
+        occ += sh;
     }
     return fminf(occ, 1);
 }
@@ -325,12 +331,12 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
     Acc acc = { 0, 0, 0, 1 };
     float thit = 1e9f, pnx = 0, pny = 0, pnz = 0;
     int phead = 0, pwho = 0;
-    float tp = s_nbody ? player_hit(&s_body[0], ox, oy, oz, dx, dy, dz, &pnx, &pny, &pnz, &phead) : 1e9f;
+    float tp = s_nbody ? player_hit(&s_body[0], ox, s_body_oy[0], oz, dx, dy, dz, &pnx, &pny, &pnz, &phead) : 1e9f;
     if (s_nbody) pwho = s_body[0].who;
     for (int i = 1; i < s_nbody; i++) {                    /* 다른 몸: 더 가까우면 바꾼다 */
         float nx2 = 0, ny2 = 0, nz2 = 0;
         int head2 = 0;
-        float t2 = player_hit(&s_body[i], ox, oy, oz, dx, dy, dz, &nx2, &ny2, &nz2, &head2);
+        float t2 = player_hit(&s_body[i], ox, s_body_oy[i], oz, dx, dy, dz, &nx2, &ny2, &nz2, &head2);
         if (t2 < tp) { tp = t2; pnx = nx2; pny = ny2; pnz = nz2; phead = head2; pwho = s_body[i].who; }
     }
     if (t1 > t0) {

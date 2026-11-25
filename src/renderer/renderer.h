@@ -26,6 +26,7 @@ typedef struct {
     const Body *bodies;               /* 그릴 플레이어 몸들 (1인칭이면 자기 몸은 빼고 넘긴다) */
     int nbody;
     float paspect;                    /* 픽셀 하나의 세로/가로 비 (0이면 1: 정사각형). 터미널 사분 블록은 2 */
+    float py;                         /* first person: jump height added to the eye height */
 } View;
 
 /* 그린 결과. 위에서부터 H줄, 왼쪽부터 W칸을 쓴다 (0xRRGGBB) */

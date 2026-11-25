@@ -214,6 +214,7 @@ static void on_press(int vk)
     else if (vk == 'R') do_action(ACT_RESET);
     else if (vk == 'Z') do_action(ACT_UNDO);
     else if (vk == 'I') do_action(ACT_HINT);
+    else if (vk == VK_SPACE) do_action(ACT_JUMP);
     else game_view_key(vk);
 }
 

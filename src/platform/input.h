@@ -14,7 +14,7 @@
 #include <stdint.h>
 
 enum {
-    VK_BACK = 0x08, VK_TAB = 0x09, VK_ENTER = 0x0D, VK_ESC = 0x1B,
+    VK_BACK = 0x08, VK_TAB = 0x09, VK_ENTER = 0x0D, VK_SHIFT = 0x10, VK_ESC = 0x1B, VK_SPACE = 0x20,
     VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28,
     VK_PLUS = 0xBB, VK_MINUS = 0xBD,
 };

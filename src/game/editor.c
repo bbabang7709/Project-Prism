@@ -326,8 +326,8 @@ void editor_draw(int frame)
     v.sel_obj = g_objat[s_cz][s_cx] - 1;                  /* 커서 칸의 물체에는 노란 테두리 */
     v.seg = g_seg; v.nseg = g_nseg;
     static Body start[2];                                 /* 시작 위치에 사람을 세워 보여 준다 (2번 시작 위치는 2번 색) */
-    start[0] = (Body){ (float)s_lv.sx + 0.5f, (float)s_lv.sz + 0.5f, 0 };
-    start[1] = (Body){ (float)s_lv.sx2 + 0.5f, (float)s_lv.sz2 + 0.5f, 1 };
+    start[0] = (Body){ (float)s_lv.sx + 0.5f, (float)s_lv.sz + 0.5f, 0, 0 };
+    start[1] = (Body){ (float)s_lv.sx2 + 0.5f, (float)s_lv.sz2 + 0.5f, 1, 0 };
     v.bodies = start; v.nbody = s_lv.has_start2 ? 2 : 1;
     renderer_draw(&v, W, H, frame);
     hud_blit(256);
