@@ -287,8 +287,9 @@ int main(int argc, char **argv)
         } else {
             fprintf(stderr, "usage: %s [--host [port] | --join addr[:port]] [--levels dir] [--level n] [--halfblock]\n"
                             "       %*s [--check] [--solve] [--shot file.ppm|file.png [yaw pitch [dist]]] [--size w h] [--fp x z yaw pitch] [--select n]\n"
+                            "       %*s [--term-shot file.png cols rows]\n"
                             "       옵션 없이 실행하면 시작 메뉴가 열립니다\n",
-                    argv[0], (int)strlen(argv[0]), "");
+                    argv[0], (int)strlen(argv[0]), "", (int)strlen(argv[0]), "");
             return 1;
         }
     }
