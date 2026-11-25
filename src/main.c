@@ -200,6 +200,8 @@ static void on_press(int vk)
     if (s_testing && (vk == VK_ESC || (g_cleared && vk == VK_ENTER))) back_to_editor();
     else if (vk == VK_ESC || (g_cleared && vk == VK_ENTER)) go_menu(NULL);
     else if (vk == 'H') hud_toggle_help();
+    else if (vk == 'V' && !bridge_connected())            /* nothing to toggle without the Windows mouse helper */
+        game_message(g_me, "마우스 시선은 Windows에서 mouselock 도우미를 실행했을 때만 쓸 수 있어요");
     else if (vk == 'V') {                                 /* 마우스 시선 켜기/끄기 (포인터 잠금도 같이) */
         s_look = !s_look;
         game_message(g_me, s_look ? "마우스 시선 켜짐: 마우스로 둘러봐요 (V로 끄기)" : "마우스 시선 꺼짐: 포인터가 풀렸어요 (V로 켜기)");
