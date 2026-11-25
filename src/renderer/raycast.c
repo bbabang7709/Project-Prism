@@ -212,6 +212,53 @@ static void floor_trace(float px, float pz, float fw, float *lr, float *lg, floa
     }
 }
 
+/* ---------- ambient occlusion and contact shadows ---------- */
+
+/* blocks at body height that darken the floor next to them */
+static inline int ao_solid(int x, int z)
+{
+    if ((unsigned)x >= RW || (unsigned)z >= RD) return 1;
+    int b = g_blk[1][z][x];
+    return b == B_WALL || b == B_DOOR || b == B_GATE;
+}
+
+/* falloff from an occluding edge: 1 at the edge, 0 at distance r */
+static inline float ao_fall(float d, float r)
+{
+    float k = 1 - d / r;
+    return k > 0 ? k * k : 0;
+}
+
+/* How much the floor point (hx, hz) in cell (x, z) is occluded, 0..1:
+ * walls on the four sides and inner corners, plus soft contact shadows
+ * under objects and player bodies. Only reads the voxel grid and lists. */
+static float floor_occlusion(float hx, float hz, int x, int z)
+{
+    const float R = 0.5f;
+    float u = hx - (float)x, v = hz - (float)z, occ = 0;
+    int l = ao_solid(x - 1, z), r = ao_solid(x + 1, z), n = ao_solid(x, z - 1), s = ao_solid(x, z + 1);
+    if (l) occ += ao_fall(u, R);
+    if (r) occ += ao_fall(1 - u, R);
+    if (n) occ += ao_fall(v, R);
+    if (s) occ += ao_fall(1 - v, R);
+    if (!l && !n && ao_solid(x - 1, z - 1)) occ += ao_fall(sqrtf(u * u + v * v), R);
+    if (!r && !n && ao_solid(x + 1, z - 1)) occ += ao_fall(sqrtf((1 - u) * (1 - u) + v * v), R);
+    if (!l && !s && ao_solid(x - 1, z + 1)) occ += ao_fall(sqrtf(u * u + (1 - v) * (1 - v)), R);
+    if (!r && !s && ao_solid(x + 1, z + 1)) occ += ao_fall(sqrtf((1 - u) * (1 - u) + (1 - v) * (1 - v)), R);
+    for (int dz = -1; dz <= 1; dz++)                         /* objects stand on a base of radius ~0.4 */
+        for (int dx = -1; dx <= 1; dx++) {
+            int ox = x + dx, oz = z + dz;
+            if ((unsigned)ox >= RW || (unsigned)oz >= RD || !g_objat[oz][ox]) continue;
+            float ex = hx - ((float)ox + 0.5f), ez = hz - ((float)oz + 0.5f);
+            occ += 0.7f * ao_fall(fmaxf(sqrtf(ex * ex + ez * ez) - 0.3f, 0), 0.32f);
+        }
+    for (int i = 0; i < s_nbody; i++) {                      /* player bodies, radius 0.2 */
+        float ex = hx - s_body[i].x, ez = hz - s_body[i].z;
+        occ += 0.6f * ao_fall(fmaxf(sqrtf(ex * ex + ez * ez) - 0.12f, 0), 0.3f);
+    }
+    return fminf(occ, 1);
+}
+
 /* 플레이어 몸 하나(원기둥 + 머리 구)와 화면 광선의 교차 (원본과 같은 계산) */
 static float player_hit(const Body *pb, float ox, float oy, float oz, float dx, float dy, float dz, float *nx, float *ny, float *nz, int *head)
 {
@@ -374,8 +421,13 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                         float c = fmaxf(band(e1, 0, 0.035f, fws) + band(e1, 0.5f, 0.535f, fws),
                                         band(e2, 0, 0.04f, fws) + band(e2, 1, 1.04f, fws));
                         k *= 1 - 0.3f * fminf(c, 1);
+                        if (y == 1) k *= 1 - 0.35f * ao_fall(hy - 1, 0.45f);   /* darker where the wall meets the floor */
                     }
                     ar = 0.33f * k; ag = 0.33f * k; ab = 0.40f * k;
+                }
+                if (y == 0 && axis == 1 && ny > 0) {                             /* floor level: ambient occlusion */
+                    float o = 1 - 0.5f * floor_occlusion(hx, hz, x, z);
+                    ar *= o; ag *= o; ab *= o;
                 }
                 /* 표시할 칸(게임: 놓을 칸, 에디터: 커서)의 윗면 테두리. 바닥이 아닌 벽·문 윗면도 표시한다 */
                 if (hl == 0 && x == F->tx && z == F->tz && axis == 1 && ny > 0) hl = band(edge, 0, 0.09f, fws);
@@ -505,6 +557,10 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
         }
     }
     if (acc.T > 0.001f) layer(&acc, bgr, bgg, bgb, 1);
+    if (F->fp && thit < 1e8f) {                              /* first person: faint distance haze for depth */
+        float f = fminf(fmaxf((thit - 5) / 28, 0), 0.28f);
+        acc.r = mixf(acc.r, bgr, f); acc.g = mixf(acc.g, bgg, f); acc.b = mixf(acc.b, bgb, f);
+    }
 
     /* 빛줄기: 화면 광선과 가까울수록 밝게 (가려진 부분은 thit에서 끊김) */
     float tm = thit < 1e8f ? thit : 200;

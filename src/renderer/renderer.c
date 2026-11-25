@@ -89,6 +89,14 @@ static void post_pass(int W, int H, int sel_id, int frame)
                 else if (!nthing && (g_id[j][i + 1] != id || g_id[j + 1][i] != id)) g_pix[j][i] = scale_c(g_pix[j][i], 0.86f);
             }
         }
+    /* vignette: darken the corners a little to pull the eye to the centre */
+    for (int j = 0; j < H; j++) {
+        float ry = 2 * ((float)j + 0.5f) / (float)H - 1;
+        for (int i = 0; i < W; i++) {
+            float rx = 2 * ((float)i + 0.5f) / (float)W - 1;
+            g_pix[j][i] = scale_c(g_pix[j][i], 1 - 0.18f * (rx * rx + ry * ry) * 0.5f);
+        }
+    }
 }
 
 /* ---------- 카메라와 프레임 ---------- */
@@ -103,7 +111,7 @@ static void setup_frame(const View *v, int W, int H, int frame)
     F->ux = -sy * sp; F->uy = cp; F->uz = -cy * sp;
     if (v->fp) {
         F->ox = v->px; F->oy = EYE_Y; F->oz = v->pz;
-        F->tanh = 0.72f;
+        F->tanh = 1.0f;                                   /* 90 degree horizontal field of view */
     } else {
         /* 방 가운데를 보되, 카메라 쪽으로 조금 당긴 점을 본다.
          * 위에서 비스듬히 보면 가까운 쪽 모서리가 화면 아래로 더 길게 늘어나기 때문이다 */
