@@ -11,24 +11,35 @@
  *   - it reports the real held/released state of the movement keys
  *   - Alt-Tab / another window / the game's "unlock" message releases it
  *
+ * By default it also starts the game: it opens Windows Terminal titled
+ * "<game>" running  wsl.exe --cd <repo> -e ./prism [args]  (falls back to a
+ * plain console window when wt.exe is missing) and builds ./prism first with
+ * make if it does not exist yet. Arguments it does not know go to prism.
+ *
+ *   mouselock.exe [--title <name>] [prism args...]   launch the game + helper
+ *   mouselock.exe --no-launch [--title <name>]       helper only
+ *   mouselock.exe --restore                          bring the pointer back
+ *
  * Build (in WSL):  sudo apt install gcc-mingw-w64-x86-64 && make winhelper
- * If the pointer ever stays invisible:  mouselock.exe --restore
  */
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <mmsystem.h>
+#include <wchar.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PORT       47017
 #define TIMER_ID   1
 #define TIMER_MS   8
 
-/* key bits sent to the game (must match include/bridge.h) */
+/* key bits sent to the game (must match src/platform/bridge.h) */
 enum {
     KB_W = 1 << 0, KB_A = 1 << 1, KB_S = 1 << 2, KB_D = 1 << 3,
     KB_SPACE = 1 << 4, KB_SHIFT = 1 << 5, KB_LEFT = 1 << 6, KB_RIGHT = 1 << 7,
@@ -319,33 +330,161 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcA(h, msg, wp, lp);
 }
 
-int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
+/* ---------- launching the game ---------- */
+
+#define CMD_MAX 8192
+
+/* Appends one argument to a command line, quoted the way CommandLineToArgvW
+ * splits it. For wt.exe a ';' starts a new tab command, so it is escaped. */
+static int append_arg(wchar_t *cmd, const wchar_t *arg, int for_wt)
 {
-    (void)prev; (void)show;
-    if (cmd && strstr(cmd, "--restore")) {          /* emergency: bring the pointer back */
-        ClipCursor(NULL);
-        SystemParametersInfoW(SPI_SETCURSORS, 0, NULL, 0);
-        return 0;
+    size_t len = wcslen(cmd);
+    wchar_t out[2048];
+    size_t n = 0;
+    int quote = arg[0] == 0 || wcspbrk(arg, L" \t\"") != NULL;
+    if (len) out[n++] = L' ';
+    if (quote) out[n++] = L'"';
+    for (const wchar_t *p = arg; *p; p++) {
+        size_t bs = 0;
+        while (p[bs] == L'\\') bs++;
+        if (n + 2 * bs + 4 >= sizeof(out) / sizeof(out[0])) return -1;
+        if (bs) {                                   /* backslashes are literal unless a quote follows */
+            int before_quote = p[bs] == L'"' || (quote && p[bs] == 0);
+            for (size_t i = 0; i < (before_quote ? 2 * bs : bs); i++) out[n++] = L'\\';
+            p += bs - 1;
+            continue;
+        }
+        if (*p == L'"') out[n++] = L'\\';
+        else if (*p == L';' && for_wt) out[n++] = L'\\';
+        out[n++] = *p;
     }
-    /* one instance only */
-    dlog("mouselock started");
-    if (cmd) {                                       /* --title <name> or --title "<name>" */
-        const char *t = strstr(cmd, "--title");
-        if (t) {
-            t += 7;
-            while (*t == ' ') t++;
-            int q = (*t == '"');
-            if (q) t++;
-            size_t n = 0;
-            while (t[n] && t[n] != (q ? '"' : ' ') && n < sizeof(g_title) - 1) { g_title[n] = t[n]; n++; }
-            g_title[n] = 0;
+    if (quote) out[n++] = L'"';
+    if (len + n + 1 > CMD_MAX) return -1;
+    wmemcpy(cmd + len, out, n);
+    cmd[len + n] = 0;
+    return 0;
+}
+
+/* Runs cmd and waits for it; returns its exit code, or -1 if it did not start. */
+static long run_and_wait(wchar_t *cmd, const wchar_t *dir, DWORD flags)
+{
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, flags, NULL, dir, &si, &pi)) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return (long)code;
+}
+
+static void fail_box(const wchar_t *msg)
+{
+    dlog("launch failed");
+    MessageBoxW(NULL, msg, L"Prism", MB_OK | MB_ICONERROR);
+}
+
+/* Starts the game in WSL inside a terminal window titled `title`.
+ * root is the repository folder (the parent of tools\). */
+static int launch_game(const wchar_t *root, const wchar_t *title, wchar_t **args, int nargs)
+{
+    wchar_t path[MAX_PATH + 16], cmd[CMD_MAX];
+
+    /* the game binary lives next to the sources; build it first if needed */
+    swprintf(path, sizeof(path) / sizeof(path[0]), L"%ls\\prism", root);
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        dlog("prism not built yet, running make in WSL");
+        cmd[0] = 0;
+        append_arg(cmd, L"wsl.exe", 0); append_arg(cmd, L"--cd", 0); append_arg(cmd, root, 0);
+        append_arg(cmd, L"-e", 0); append_arg(cmd, L"make", 0); append_arg(cmd, L"prism", 0);
+        long r = run_and_wait(cmd, root, CREATE_NEW_CONSOLE);
+        if (r < 0) { fail_box(L"wsl.exe could not be started. Install WSL, then run make in the project folder."); return -1; }
+        if (r != 0 || GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+            fail_box(L"Building prism failed. Run make in WSL in the project folder to see the errors.");
+            return -1;
         }
     }
+
+    /* wt.exe -w new --title T --suppressApplicationTitle wsl.exe --cd ROOT -e ./prism ARGS */
+    for (int use_wt = 1; use_wt >= 0; use_wt--) {
+        cmd[0] = 0;
+        int bad = 0;
+        if (use_wt) {
+            bad |= append_arg(cmd, L"wt.exe", 1) | append_arg(cmd, L"-w", 1) | append_arg(cmd, L"new", 1) |
+                   append_arg(cmd, L"--title", 1) | append_arg(cmd, title, 1) |
+                   append_arg(cmd, L"--suppressApplicationTitle", 1);
+        }
+        bad |= append_arg(cmd, L"wsl.exe", use_wt) | append_arg(cmd, L"--cd", use_wt) | append_arg(cmd, root, use_wt) |
+               append_arg(cmd, L"-e", use_wt) | append_arg(cmd, L"./prism", use_wt);
+        for (int i = 0; i < nargs; i++) bad |= append_arg(cmd, args[i], use_wt);
+        if (bad) { fail_box(L"The command line is too long."); return -1; }
+
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        memset(&si, 0, sizeof(si));
+        si.cb = sizeof(si);
+        si.lpTitle = (wchar_t *)title;              /* console fallback: the game also sets this title itself */
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, use_wt ? 0 : CREATE_NEW_CONSOLE, NULL, root, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            dlog(use_wt ? "game started in Windows Terminal" : "wt.exe not found, game started in a console window");
+            return 0;
+        }
+    }
+    fail_box(L"wsl.exe could not be started. Install WSL to play Prism.");
+    return -1;
+}
+
+int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
+{
+    (void)prev; (void)show; (void)cmd;
+    int argc = 0;
+    wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return 1;
+
+    /* own flags; everything else is passed to prism */
+    int launch = 1;
+    wchar_t wtitle[128] = L"Prism";
+    wchar_t **pass = (wchar_t **)calloc((size_t)argc + 1, sizeof(*pass));
+    int npass = 0;
+    if (!pass) return 1;
+    for (int i = 1; i < argc; i++) {
+        if (!wcscmp(argv[i], L"--restore")) {      /* emergency: bring the pointer back */
+            ClipCursor(NULL);
+            SystemParametersInfoW(SPI_SETCURSORS, 0, NULL, 0);
+            return 0;
+        } else if (!wcscmp(argv[i], L"--no-launch")) launch = 0;
+        else if (!wcscmp(argv[i], L"--title") && i + 1 < argc) {
+            wcsncpy(wtitle, argv[++i], sizeof(wtitle) / sizeof(wtitle[0]) - 1);
+            wtitle[sizeof(wtitle) / sizeof(wtitle[0]) - 1] = 0;
+        } else pass[npass++] = argv[i];
+    }
+    WideCharToMultiByte(CP_ACP, 0, wtitle, -1, g_title, sizeof(g_title), NULL, NULL);
+    dlog("mouselock started");
+
     char objname[160];
     snprintf(objname, sizeof(objname), "MouseLockHelper_%s", g_title);
     dlog("title=\"%s\"", g_title);
     HANDLE mtx = CreateMutexA(NULL, TRUE, objname);
-    if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+    int already = GetLastError() == ERROR_ALREADY_EXISTS;   /* one helper per title */
+
+    if (launch) {
+        /* repository root = parent of the folder holding this exe (tools\) */
+        wchar_t root[MAX_PATH];
+        DWORD n = GetModuleFileNameW(NULL, root, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) return 1;
+        for (int up = 0; up < 2; up++) {
+            wchar_t *sl = wcsrchr(root, L'\\');
+            if (sl) *sl = 0;
+        }
+        if (launch_game(root, wtitle, pass, npass) != 0) return 1;
+    }
+    free(pass);
+    LocalFree(argv);
+    if (already) return 0;                          /* the running helper will find the new window */
 
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 1;

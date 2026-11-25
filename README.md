@@ -1,6 +1,6 @@
 # 🔦 PRISM — 빛의 신전
 
-> 2026년 2학기 ELEC462 시스템프로그래밍 팀 프로젝트 (Team <!-- TODO: 팀 번호 -->)
+> 2026년 2학기 ELEC462 시스템프로그래밍 팀 프로젝트 (Team 17)
 
 **PRISM**은 그래픽 라이브러리 없이 **CPU 계산만으로 3D 장면을 그려 터미널에 출력하는 광학 퍼즐 게임**입니다.
 
@@ -217,17 +217,35 @@ AddressSanitizer와 UndefinedBehaviorSanitizer를 붙인 `prism-san`을 만듭�
 
 - 게임 창이 맨 앞일 때만 포인터를 숨기고 창 가운데에 고정하고, **마우스가 움직인 양**(raw input)과 실제 키 상태를 게임으로 보냅니다 (TCP 127.0.0.1:47017, 이 컴퓨터 안에서만).
 - 1인칭 플레이 중에만 포인터를 잡습니다. 메뉴, 에디터, 내려다보기에서는 자동으로 풀립니다. `V`로 직접 끄고 켤 수도 있습니다.
-- 도우미가 없거나 연결되지 않으면 지금까지처럼 키보드(방향키)로만 시선을 돌립니다. 클릭과 휠은 그대로 동작합니다.
+- 도우미가 연결되어 있는 동안에는 `W` `A` `S` `D`와 방향키의 누름/뗌을 도우미가 읽은 **실제 키 상태**로 판단합니다. 그래서 win32 입력 모드가 없는 터미널에서도 키를 누르고 있는 동안 계속 걷습니다.
+- 도우미가 없거나 연결되지 않으면 지금까지처럼 키보드(방향키)로만 시선을 돌립니다. 클릭과 휠은 그대로 동작합니다. 게임이 포트 47017을 열지 못하면 시작할 때 알려 주고 키보드 시선만 씁니다.
+- 도우미는 30초 동안 게임 창을 찾지 못하거나, 게임과의 연결이 5초 넘게 끊기면 스스로 끝납니다. 게임이 끝날 때도 도우미에게 끝내라고 알립니다.
+
+이 도우미는 **선택 사항**입니다. 게임 본체는 Ubuntu에서 C 코드만으로 빌드·실행되며, 도우미 없이도 모든 기능을 키보드로 쓸 수 있습니다. 도우미도 C(`tools/mouselock.c`, Win32 API)로 작성했으며, 게임을 띄우는 실행기 역할도 함께 합니다.
 
 사용법 (한 번만 빌드):
 
 ```
 sudo apt install gcc-mingw-w64-x86-64     # WSL, 처음 한 번
 make winhelper                            # tools/mouselock.exe 생성
-tools\Prism.bat                           # Windows에서 실행 (더블클릭 가능)
+tools\mouselock.exe                       # Windows에서 실행 (더블클릭 가능)
 ```
 
-`Prism.bat`은 도우미를 띄운 뒤 창 제목이 `Prism`인 Windows Terminal에서 게임을 실행합니다. 도우미는 제목이 정확히 `Prism`인 창만 게임 창으로 인정합니다. 도우미가 남아서 포인터가 안 보이면 `tools\mouselock.exe --restore`를 실행하세요. 문제가 있으면 `tools\mouselock.log`에 창 검색, 연결, 포커스 상태가 기록됩니다.
+`mouselock.exe`는 `CreateProcessW`로 창 제목이 `Prism`인 Windows Terminal을 열어 `wsl.exe --cd <프로젝트 폴더> -e ./prism`을 실행한 뒤, 그대로 도우미로 동작합니다.
+
+- 프로젝트 폴더는 `mouselock.exe`가 있는 `tools\`의 상위 폴더입니다.
+- `prism`이 아직 없으면 새 콘솔 창에서 WSL의 `make prism`으로 먼저 빌드합니다. 빌드에 실패하면 알림 창을 띄우고 끝납니다.
+- 도우미가 모르는 인자는 그대로 게임에 넘깁니다(예: `tools\mouselock.exe --level 3`, `tools\mouselock.exe --join 192.168.0.10`).
+- Windows Terminal(`wt.exe`)이 없으면 일반 콘솔 창에서 실행합니다.
+
+| 도우미 옵션 | 설명 |
+|---|---|
+| (없음) | 게임을 띄우고 도우미로 동작 |
+| `--no-launch` | 게임을 띄우지 않고 도우미로만 동작 (게임은 직접 `Prism` 제목의 창에서 실행) |
+| `--title 이름` | 게임 창 제목 (기본 `Prism`) |
+| `--restore` | 숨겨진 포인터를 되돌리고 바로 끝냄 |
+
+도우미는 제목이 정확히 `Prism`인 창만 게임 창으로 인정합니다. 도우미가 남아서 포인터가 안 보이면 `tools\mouselock.exe --restore`를 실행하세요. 문제가 있으면 `tools\mouselock.log`에 게임 실행, 창 검색, 연결, 포커스 상태가 기록됩니다.
 
 - **겨누기**: 1인칭에서는 조준점에서 4.5칸 안의 물체나 바닥을 겨눕니다. 겨눈 물체에는 노란 테두리가, 물체를 놓을 수 있는 바닥 칸에는 노란 사각형이 표시됩니다.
 - **들고 있는 동안**: 그 물체는 방에서 빠지므로 빛이 그대로 지나갑니다.
@@ -301,7 +319,7 @@ tools\Prism.bat                           # Windows에서 실행 (더블클릭 �
 | `V` | **풀이 확인**: 거울 각도를 모두 시험해 풀 수 있는지, 처음부터 풀려 있지는 않은지 알려 주고 정답 각도를 보여 줌 |
 | `T` | 시험 플레이 (ESC로 에디터에 돌아옴) |
 | `N` | 이름 바꾸기 (한글 입력 가능) |
-| `S` | 저장 (`levels/`에 `.lvl` 파일로. 새 방은 다음 번호로 `07-custom.lvl`처럼) |
+| `S` | 저장 (`levels/`에 `.lvl` 파일로. 새 방은 다음 번호로 `14-custom.lvl`처럼) |
 | `ESC` | 메뉴로 (저장하지 않은 변경이 있으면 한 번 더 눌러야 나감) |
 
 - 테두리에는 벽과 문만, 시작 위치는 빈 바닥에만 둘 수 있습니다. 저장할 때 광원·수정이 있는지, 물체가 32개를 넘지 않는지, 순간이동 고리가 0개나 2개인지 검사합니다.
@@ -405,6 +423,7 @@ map                     다음 12줄이 16칸짜리 지도
 ### 7. 입력 처리
 - 입력 바이트를 직접 해석합니다. 일반 키, 방향키, SGR 마우스(클릭, 휠), Windows Terminal의 win32 입력 모드(누름/뗌 구분)를 처리합니다.
 - ESC 키 하나만 눌렀는지, 이스케이프 시퀀스의 시작인지는 60ms를 기다려서 구분합니다.
+- **마우스 잠금 도우미 연결**(`platform/bridge.c`): 게임은 127.0.0.1:47017에서만 기다리는 작은 TCP 서버 스레드를 따로 둡니다. 도우미가 보내는 16바이트 패킷(마우스 이동량 dx·dy, 누르고 있는 키 비트, 순번)을 받아 뮤텍스 아래에 모아 두고, 게임 루프가 프레임마다 꺼내 씁니다. 게임은 한 바이트 명령(`L` 잠금, `U` 풀기, `Q` 끝내기)으로 답합니다. 0.5초 넘게 패킷이 없거나 게임 창이 맨 앞이 아니면 연결되지 않은 것으로 보고 터미널 입력만 씁니다.
 
 ### 8. 방 파일과 여러 방
 - `levels/` 폴더의 텍스트 파일을 이름 순서로 읽어 방을 만듭니다(`opendir`, `readdir`, `open`, `fstat`, `read`).
@@ -455,7 +474,8 @@ map                     다음 12줄이 16칸짜리 지도
 | 시간 | `timerfd_create`, `timerfd_settime` | 30fps 게임 틱 |
 | | `clock_gettime(CLOCK_MONOTONIC)` | 키 누름 유지 시간, ESC 판별, fps, 렌더 시간 측정 |
 | 시그널 | `sigaction` | `SIGINT`, `SIGTERM`, `SIGHUP`은 정상 종료, `SIGWINCH`는 창 크기 변경 |
-| 스레드 | `pthread_create`, `pthread_join` | 렌더링 작업 스레드 생성과 종료 |
+| 스레드 | `pthread_create`, `pthread_join` | 렌더링 작업 스레드, 마우스 도우미 연결 스레드 생성과 종료 |
+| | `pthread_mutex_lock`, `pthread_mutex_unlock` | 도우미 스레드가 모은 마우스 이동량·키 상태를 게임 루프와 나눠 쓰기 (`platform/bridge.c`) |
 | | `pthread_barrier_init`, `pthread_barrier_wait` | 프레임마다 스레드 동기화 |
 | | `sysconf(_SC_NPROCESSORS_ONLN)` | CPU 코어 수만큼 스레드 수 결정 |
 | 파일 | `opendir`, `readdir`, `closedir` | `levels/` 폴더에서 방 파일 목록 읽기 (`world/world.c`) |
@@ -469,6 +489,7 @@ map                     다음 12줄이 16칸짜리 지도
 | | `send`, `recv`, `poll` | 메시지 주고받기. 보내기 버퍼가 차면 `POLLOUT`을 기다림 |
 | | `fcntl(O_NONBLOCK)`, `setsockopt(TCP_NODELAY, SO_REUSEADDR)` | 논블로킹 소켓, 작은 메시지 바로 보내기 |
 | | `getifaddrs` | 호스트 화면에 참가할 주소 표시 |
+| | `socket`, `bind(127.0.0.1)`, `listen`, `accept`, `recv`, `send(MSG_NOSIGNAL)`, `poll` | 마우스 잠금 도우미 연결: 이 컴퓨터 안에서만 받는 포트 47017 (`platform/bridge.c`) |
 | 프로세스 (시험) | `fork`, `execv`, `dup2`, `waitpid` | `make test`에서 기준 커밋 빌드와 새 빌드를 실행해 출력 비교 (`tests/baseline.c`) |
 
 ---
@@ -509,7 +530,7 @@ Project-Prism/
 │   │   └── raycast.c/.h       # 화면 광선 추적, 물체 SDF, 표면 조명 (렌더러 내부)
 │   ├── game/
 │   │   ├── game.c/.h          # 플레이어·카메라, 겨누기, 들기·놓기·돌리기, 퍼즐 판정, 방 이동, 자동 풀이
-│   │   ├── hud.c/.h           # 픽셀 → 반블록 칸, 상태 줄, 안내, 도움말, 알림, 끝 화면
+│   │   ├── hud.c/.h           # 픽셀 → 블록 문자 칸(2×2 사분 블록, 반블록), 상태 줄, 안내, 도움말, 알림, 끝 화면
 │   │   ├── menu.c/.h          # 시작 메뉴 (도는 3D 배경, 시작 방 고르기, 주소 입력, 조작법)
 │   │   ├── progress.c/.h      # 진행 기록 (푼 방과 가장 적은 조작 횟수, ~/.prism_progress)
 │   │   └── editor.c/.h        # 레벨 에디터 (놓기·지우기·돌리기, 풀이 확인, 시험 플레이, 저장)
@@ -521,8 +542,7 @@ Project-Prism/
 │       ├── bridge.c/.h        # Windows 마우스 잠금 도우미와의 TCP 연결 (127.0.0.1:47017)
 │       └── clock.h            # 단조 시계
 ├── tools/
-│   ├── mouselock.c            # Windows 도우미: 포인터 숨김·고정, 마우스 이동량, 실제 키 상태
-│   └── Prism.bat              # 도우미와 함께 실행하는 배치 파일
+│   └── mouselock.c            # (선택) Windows 도우미: 게임 실행, 포인터 숨김·고정, 마우스 이동량, 실제 키 상태
 └── tests/
     └── baseline.c             # 기준 커밋과 결과 비교, 방 풀이 확인 (make test)
 ```
@@ -533,7 +553,8 @@ Project-Prism/
 main ──> game, hud, menu ──> optics ──> world ──> common
   │        │   │          ▲
   │        │   └──────> renderer ──> world (읽기), common (Seg, Body)
-  │        └──────────> platform/input
+  │        └──────────> platform/input, platform/bridge
+  ├────> platform/bridge (마우스 잠금 도우미, 선택)
   └────> net ──> game, world
 platform/terminal <── hud
 ```
@@ -550,17 +571,17 @@ platform/terminal <── hud
 
 | 모듈 | 코드 줄 수 |
 |---|---:|
-| `game` (게임, HUD, 메뉴, 에디터, 진행 기록) | 1,426 |
+| `game` (게임, HUD, 메뉴, 에디터, 진행 기록) | 1,443 |
 | `renderer` | 780 |
-| `net` | 489 |
-| `platform` | 337 |
+| `net` | 500 |
+| `platform` (터미널, 입력, 도우미 연결) | 495 |
 | `world` | 473 |
-| `main.c` | 358 |
+| `main.c` | 384 |
 | `optics` | 237 |
 | `common` | 26 |
-| **합계** | **4,126** |
+| **합계** | **4,338** |
 
-주석과 빈 줄을 뺀 C 코드 줄 수이며, `tests/`(204줄)는 포함하지 않았습니다.
+주석과 빈 줄을 뺀 C 코드 줄 수이며, `tests/`(204줄)와 Windows 도우미 `tools/mouselock.c`(432줄)는 포함하지 않았습니다.
 
 ---
 
