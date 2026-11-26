@@ -3,7 +3,7 @@
  *
  * socket() / setsockopt() / bind() / listen() / accept() / recv() / send():
  * one client at a time. Motion is accumulated under a mutex and consumed by
- * the 60 Hz simulation; the held-key mask replaces the terminal's guesswork.
+ * the game loop (every 30 fps tick); the held-key mask replaces the terminal's guesswork.
  */
 #include <arpa/inet.h>
 #include <errno.h>
@@ -70,7 +70,9 @@ static void *listen_main(void *arg)
         if (fd < 0) continue;
         int one = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        pthread_mutex_lock(&g_mu);
         g_client = fd;
+        pthread_mutex_unlock(&g_mu);
         bridge_send('L');
         serve_client(fd);
         pthread_mutex_lock(&g_mu);
@@ -145,11 +147,14 @@ uint32_t bridge_keys(void)
     return k;
 }
 
+/* Sent from the game thread while the listener thread may be closing the socket:
+ * hold the mutex across the send so the fd cannot be closed (and reused) under us. */
 void bridge_send(char c)
 {
-    int fd = g_client;
-    if (fd >= 0) {
-        ssize_t n = send(fd, &c, 1, MSG_NOSIGNAL | MSG_DONTWAIT);
-        (void)n;
+    pthread_mutex_lock(&g_mu);
+    if (g_client >= 0) {
+        ssize_t n = send(g_client, &c, 1, MSG_NOSIGNAL | MSG_DONTWAIT);   /* non-blocking: never stalls the game */
+        (void)n;                                                          /* a lost control byte is re-sent on the next change */
     }
+    pthread_mutex_unlock(&g_mu);
 }

@@ -480,10 +480,22 @@ int main(int argc, char **argv)
 
     input_init(&(InputHandlers){ on_press, on_click, on_wheel, on_quit, on_text });
     term_install_signals();
+    /* the 30 fps tick; without it the loop would wait forever, so failing here is fatal */
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
     struct itimerspec its = { { 0, 1000000000L / 30 }, { 0, 1000000000L / 30 } };
-    timerfd_settime(tfd, 0, &its, NULL);
-    term_setup();
+    if (tfd < 0 || timerfd_settime(tfd, 0, &its, NULL) < 0) {
+        perror("prism: timerfd");
+        renderer_shutdown();
+        net_close();
+        return 1;
+    }
+    if (term_setup() < 0) {
+        perror("prism: terminal");
+        close(tfd);
+        renderer_shutdown();
+        net_close();
+        return 1;
+    }
     term_get_size();
     if (bridge_start() != 0) fprintf(stderr, "prism: 마우스 도우미 포트 %d를 쓸 수 없어요 (키보드 시선만 사용)\n", BRIDGE_PORT);
     int64_t now = now_ms();

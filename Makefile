@@ -23,8 +23,19 @@ build/%.o: src/%.c
 #   make test REF=f95e08b   원본 프로토타입(첫 커밋)과 비교
 REF ?= HEAD
 
+# git 기록이 없는 사본(zip 등)에서는 기준 비교를 건너뛰고 방 풀이 확인만 한다
+HAVE_REF := $(shell git -c safe.directory='*' rev-parse --verify -q '$(REF)^{commit}' >/dev/null 2>&1 && echo yes)
+
+ifeq ($(HAVE_REF),yes)
 test: prism ref tests/out/baseline
 	tests/out/baseline tests/out/refsrc/prism
+else
+test: check
+endif
+
+# 방 풀이 확인만: 모든 방이 닫힌 문으로 시작하고 풀 수 있는지
+check: prism tests/out/baseline
+	tests/out/baseline -
 
 # 기준 커밋의 소스를 꺼내 같은 컴파일러·플래그로 빌드한다 (이미지까지 비교하려면 플래그가 같아야 한다)
 ref:
@@ -62,4 +73,4 @@ tools/mouselock.exe: tools/mouselock.c
 clean:
 	rm -rf build build-san prism prism-san tests/out
 
-.PHONY: all test ref sanitize winhelper clean
+.PHONY: all test check ref sanitize winhelper clean

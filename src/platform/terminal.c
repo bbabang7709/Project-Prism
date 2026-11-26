@@ -18,6 +18,7 @@ static int g_full = 1;
 static char g_out[1 << 22];
 static char *g_op;
 static struct termios g_orig;
+static int g_have_orig;                 /* g_orig holds the settings to restore (term_setup succeeded) */
 volatile sig_atomic_t g_quit, g_resize;
 
 static void write_all(const char *buf, size_t len)
@@ -148,21 +149,23 @@ void term_restore(void)
 {
     const char *s = "\x1b[?9001l\x1b[?1004l\x1b[?1000l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l";
     write_all(s, strlen(s));
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_orig);
+    if (g_have_orig) tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_orig);
 }
 
-void term_setup(void)
+int term_setup(void)
 {
     struct termios raw;
-    tcgetattr(STDIN_FILENO, &g_orig);
+    if (tcgetattr(STDIN_FILENO, &g_orig) < 0) return -1;  /* not a terminal: nothing changed, nothing to restore */
     raw = g_orig;
     raw.c_lflag &= ~(tcflag_t)(ICANON | ECHO | ISIG | IEXTEN);
     raw.c_iflag &= ~(tcflag_t)(IXON | ICRNL);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) < 0) return -1;
+    g_have_orig = 1;
     const char *s = "\x1b]0;Prism\x07\x1b[?1049h\x1b[?25l\x1b[2J\x1b[?9001h\x1b[?1004h\x1b[?1000h\x1b[?1006h";
     write_all(s, strlen(s));
+    return 0;
 }
 
 static void on_signal(int sig)

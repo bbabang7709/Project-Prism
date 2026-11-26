@@ -20,7 +20,7 @@ static const struct { char c; const char *name; } TOOLS[] = {
     { '@', "시작 위치" }, { '2', "2번 시작 위치 (나뉜 2인용 방)" },
 };
 #define NTOOL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
-static const char OBJ_CHARS[] = "EPMSbrRGBYOTK";
+static const char OBJ_CHARS[] = "EPMSbrRGBYCVOTK";   /* must match world.c */
 
 static Level s_lv;                      /* 편집 중인 방 */
 static char s_file[64];                 /* 저장할 파일 이름 */
@@ -206,10 +206,15 @@ static void verify(void)
     int k = 0;
     for (int z = 0; z < RD; z++)
         for (int x = 0; x < RW; x++) k += s_lv.map[z][x] == 'M' || s_lv.map[z][x] == 'S';
-    if (k > 5) { msg("거울이 %d개라 모든 각도를 시험하기엔 너무 많아요 (5개까지)", k); return; }
+    if (k > SOLVE_MAX_MIRRORS) { msg("거울이 %d개라 모든 각도를 시험할 수 없어요 (%d개까지)", k, SOLVE_MAX_MIRRORS); return; }
     apply();
     game_solve_setup();                                   /* 누군가 서 있거나 물체를 옮겨야 풀리는 방 */
     game_simulate();
+    /* the search tries 8^k mirror settings; estimate its time from one measured light calculation
+     * so the editor never freezes for long (the game itself is single-threaded here) */
+    double est = (double)(g_sim_us > 0 ? g_sim_us : 1) / 1e6;
+    for (int i = 0; i < k; i++) est *= 8;
+    if (est > 5) { msg("거울이 %d개라 풀이 확인에 약 %.0f초 걸려요. 거울을 줄이거나 방 파일의 rot로 정답에 가깝게 두세요", k, est); return; }
     if (g_solved) {
         msg("처음부터 풀려 있어요. 거울 각도를 바꿔 풀리지 않은 상태로 시작하게 하세요");
     } else if (game_solve()) {

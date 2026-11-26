@@ -35,9 +35,19 @@ static void render_rows(int id)
 
 const RenderStats *renderer_stats(void) { return &g_stats; }
 
+/* Start gate: workers are created first and wait here until the barriers exist.
+ * The barriers need the exact thread count, which is only known once every
+ * pthread_create has returned (one may fail). */
+static pthread_mutex_t g_gate_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_gate_cv = PTHREAD_COND_INITIALIZER;
+static int g_gate_open;
+
 static void *worker(void *arg)
 {
     int id = (int)(intptr_t)arg;
+    pthread_mutex_lock(&g_gate_mu);
+    while (!g_gate_open) pthread_cond_wait(&g_gate_cv, &g_gate_mu);
+    pthread_mutex_unlock(&g_gate_mu);
     for (;;) {
         pthread_barrier_wait(&g_go);
         if (g_wquit) break;
@@ -49,15 +59,25 @@ static void *worker(void *arg)
 
 int renderer_init(void)
 {
-    int nthreads = (int)sysconf(_SC_NPROCESSORS_ONLN);
-    nthreads = nthreads < 1 ? 1 : nthreads > MAX_THREADS ? MAX_THREADS : nthreads;
-    g_nthreads = nthreads;
-    g_stats.nthreads = nthreads;
-    pthread_barrier_init(&g_go, NULL, (unsigned)nthreads);
-    pthread_barrier_init(&g_mid, NULL, (unsigned)nthreads);
-    pthread_barrier_init(&g_done, NULL, (unsigned)nthreads);
-    for (int i = 1; i < nthreads; i++) pthread_create(&g_tid[i], NULL, worker, (void *)(intptr_t)i);
-    return nthreads;
+    int want = (int)sysconf(_SC_NPROCESSORS_ONLN), n = 1;
+    want = want < 1 ? 1 : want > MAX_THREADS ? MAX_THREADS : want;
+    for (int i = 1; i < want; i++, n++)                   /* thread 0 is the caller itself */
+        if (pthread_create(&g_tid[i], NULL, worker, (void *)(intptr_t)i) != 0) {
+            fprintf(stderr, "prism: 렌더 스레드를 %d개만 만들었어요 (계속 진행)\n", n);
+            break;
+        }
+    g_nthreads = n;
+    g_stats.nthreads = n;
+    if (pthread_barrier_init(&g_go, NULL, (unsigned)n) != 0 || pthread_barrier_init(&g_mid, NULL, (unsigned)n) != 0 ||
+        pthread_barrier_init(&g_done, NULL, (unsigned)n) != 0) {
+        fprintf(stderr, "prism: pthread_barrier_init failed\n");
+        exit(1);
+    }
+    pthread_mutex_lock(&g_gate_mu);                       /* barriers ready: let the workers in */
+    g_gate_open = 1;
+    pthread_cond_broadcast(&g_gate_cv);
+    pthread_mutex_unlock(&g_gate_mu);
+    return n;
 }
 
 void renderer_shutdown(void)

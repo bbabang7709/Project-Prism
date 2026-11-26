@@ -18,7 +18,7 @@ extern VCell g_back[MAX_H][MAX_W];       /* 이번 프레임에 그릴 칸 */
 extern int g_cols, g_rows;                /* 지금 창 크기 (MAX_W, MAX_H로 자름) */
 extern volatile sig_atomic_t g_quit, g_resize;
 
-void term_setup(void);                    /* raw 모드, 대체 화면, 마우스·win32 입력 모드 켜기 */
+int term_setup(void);                     /* raw 모드, 대체 화면, 마우스·win32 입력 모드 켜기. -1: not a terminal */
 void term_restore(void);
 void term_install_signals(void);          /* SIGINT/TERM/HUP → g_quit, SIGWINCH → g_resize */
 void term_get_size(void);                 /* 창 크기를 읽고 다음 출력은 전체 다시 그리기 */

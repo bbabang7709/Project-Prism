@@ -8,8 +8,8 @@
  * 그다음 새 빌드로 방 파일을 하나씩(--level 1, 2, ...) 확인한다.
  *   - 처음에는 문이 닫혀 있어야 하고(풀리지 않은 상태), --solve로 풀 수 있어야 한다.
  *
- * 사용: tests/out/baseline [기준 실행 파일] [새 실행 파일]   (프로젝트 루트에서)
- *       기본값은 tests/out/prism_ref, ./prism
+ * 사용: tests/out/baseline <기준 실행 파일>   (프로젝트 루트에서, 새 빌드는 ./prism)
+ *       tests/out/baseline -                 기준 비교 없이 방 풀이 확인만 (git 기록이 없는 사본)
  *       기준 실행 파일은 그 파일이 있는 폴더에서 실행한다 (그 커밋의 levels 폴더를 쓰도록)
  */
 #define _GNU_SOURCE
@@ -182,22 +182,16 @@ static int same_image(const char *a_path, const char *b_path, char *detail, size
     return same;
 }
 
-int main(int argc, char **argv)
+/* compare every case against the reference build; returns how many differ */
+static int compare_with(const char *ref)
 {
-    const char *ref = argc > 1 ? argv[1] : OUT "/prism_ref";
-    const char *new = argc > 2 ? argv[2] : "./prism";
-    if (!exists(ref)) { fprintf(stderr, "기준 실행 파일이 없습니다: %s (make test로 실행하세요)\n", ref); return 2; }
-    if (!exists(new)) { fprintf(stderr, "먼저 make 하세요: %s 없음\n", new); return 2; }
-    if (!getcwd(g_root, sizeof g_root)) { perror("getcwd"); return 2; }
-    char ref_abs[PATH_MAX], ref_dir[PATH_MAX];            /* 기준 실행 파일은 자기 폴더에서 실행한다 */
-    if (!realpath(ref, ref_abs)) { perror(ref); return 2; }
+    const char *new = "./prism";
+    char ref_abs[PATH_MAX], ref_dir[PATH_MAX];            /* the reference runs in its own folder (its own levels/) */
+    if (!realpath(ref, ref_abs)) { perror(ref); exit(2); }
     snprintf(ref_dir, sizeof ref_dir, "%s", ref_abs);
     *strrchr(ref_dir, '/') = 0;
     ref = ref_abs;
-    make_dir(OUT);
     make_dir(OUT "/ref");
-    make_dir(OUT "/new");
-
     int fail = 0;
     for (int i = 0; i < NCASES; i++) {
         const char *name = CASES[i].name;
@@ -219,8 +213,27 @@ int main(int argc, char **argv)
     }
     if (fail) printf("실패: %d개 경우가 기준 커밋과 다릅니다 (" OUT "/ref, " OUT "/new 비교)\n", fail);
     else printf("통과: 모든 경우가 기준 커밋과 같습니다\n");
+    return fail;
+}
 
-    /* 방 파일: 모든 방이 풀리지 않은 상태로 시작하고, 거울 각도를 돌려서 풀 수 있어야 한다 */
+/*
+ * Usage (from the project root):
+ *   tests/out/baseline <reference prism>   compare with that build, then check every room
+ *   tests/out/baseline -                   check every room only (no git history, e.g. a zip copy)
+ */
+int main(int argc, char **argv)
+{
+    const char *ref = argc > 1 ? argv[1] : OUT "/prism_ref", *new = "./prism";
+    int compare = strcmp(ref, "-") != 0;
+    if (compare && !exists(ref)) { fprintf(stderr, "기준 실행 파일이 없습니다: %s (make test로 실행하세요)\n", ref); return 2; }
+    if (!exists(new)) { fprintf(stderr, "먼저 make 하세요: %s 없음\n", new); return 2; }
+    if (!getcwd(g_root, sizeof g_root)) { perror("getcwd"); return 2; }
+    make_dir(OUT);
+    make_dir(OUT "/new");
+    int fail = compare ? compare_with(ref) : 0;
+    if (!compare) printf("기준 비교는 건너뜁니다 (방 풀이 확인만)\n");
+
+    /* rooms: every room must start unsolved (door closed) and be solvable */
     int bad = 0, nlv = 0;
     for (int n = 1; n <= 64; n++) {
         char args[32], name[32], txt[256];

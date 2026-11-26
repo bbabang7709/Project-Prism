@@ -100,11 +100,14 @@ static void send_bye(int fd, const char *why)
     send_msg(fd, M_BYE, &w);
 }
 
-static void set_nonblock(int fd)
+/* make fd non-blocking (send small messages at once). -1 if fcntl fails: a blocking socket would stall the poll loop */
+static int set_nonblock(int fd)
 {
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    int fl = fcntl(fd, F_GETFL);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) return -1;
     int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);   /* 작은 메시지를 바로 보낸다 */
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);   /* optional: only latency */
+    return 0;
 }
 
 /* ---------- 호스트 → 참가자 ---------- */
@@ -386,7 +389,13 @@ int net_host(int port, char *err, size_t errlen)
         s_listen = -1;
         return -1;
     }
-    fcntl(s_listen, F_SETFL, fcntl(s_listen, F_GETFL) | O_NONBLOCK);
+    int fl = fcntl(s_listen, F_GETFL);
+    if (fl < 0 || fcntl(s_listen, F_SETFL, fl | O_NONBLOCK) < 0) {
+        snprintf(err, errlen, "소켓 설정 실패: %s", strerror(errno));
+        close(s_listen);
+        s_listen = -1;
+        return -1;
+    }
     s_port = port;
     local_ip(s_addr, sizeof s_addr);
     s_mode = NET_HOST;
@@ -397,7 +406,7 @@ static void accept_peer(void)
 {
     int fd = accept4(s_listen, NULL, NULL, SOCK_CLOEXEC);
     if (fd < 0) return;
-    set_nonblock(fd);
+    if (set_nonblock(fd) < 0) { close(fd); return; }
     if (s_peer.fd >= 0) {                               /* 이미 둘이다 */
         send_bye(fd, "이미 2명이 플레이 중이에요");
         close(fd);
@@ -424,7 +433,7 @@ int net_join(const char *addr, char *err, size_t errlen)
     for (struct addrinfo *a = res; a && fd < 0; a = a->ai_next) {
         fd = socket(a->ai_family, a->ai_socktype | SOCK_CLOEXEC, a->ai_protocol);
         if (fd < 0) continue;
-        set_nonblock(fd);
+        if (set_nonblock(fd) < 0) { close(fd); fd = -1; continue; }
         if (connect(fd, a->ai_addr, a->ai_addrlen) < 0 && errno != EINPROGRESS) { close(fd); fd = -1; continue; }
         struct pollfd p = { fd, POLLOUT, 0 };             /* 접속을 최대 5초 기다린다 */
         int soerr = 0;

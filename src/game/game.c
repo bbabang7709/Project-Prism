@@ -184,8 +184,8 @@ void game_solve_setup(void)
 /* 회전 가능한 물체의 모든 각도를 시험해 푸는 방법을 찾는다 (시험과 스크린샷용) */
 int game_solve(void)
 {
-    int idx[8], k = 0;
-    for (int i = 0; i < g_nobj && k < 8; i++)
+    int idx[SOLVE_MAX_MIRRORS], k = 0;
+    for (int i = 0; i < g_nobj && k < SOLVE_MAX_MIRRORS; i++)   /* more mirrors keep their file angle */
         if (g_obj[i].movable && (g_obj[i].kind == O_MIRROR || g_obj[i].kind == O_SPLIT)) idx[k++] = i;
     long total = 1;
     for (int i = 0; i < k; i++) total *= 8;
