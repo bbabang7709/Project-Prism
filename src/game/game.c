@@ -30,7 +30,7 @@ int g_ticks;
 int g_total_moves;
 int g_record;
 
-/* 되돌리기: 조작하기 전의 물체 상태와 각자 든 물체 (방을 바꾸거나 처음 상태로 하면 비운다) */
+/* undo: object state and what each player carried before a move (cleared on room change or reset) */
 #define MAXUNDO 64
 typedef struct { int x[MAXOBJ], z[MAXOBJ], rot[MAXOBJ], held[MAXOBJ], carry[MAXPLAYER]; } Snap;
 static Snap s_undo[MAXUNDO];
@@ -50,16 +50,16 @@ void game_reset(void)
     s_nundo = 0;
 }
 
-/* ---------- 빛 계산과 문 ---------- */
+/* ---------- light and doors ---------- */
 
-/* 플레이어 몸(원)이 (x, z) 칸과 겹치는가 */
+/* does a player body (circle) overlap cell (x, z) */
 static int body_on_cell(const Player *p, int x, int z)
 {
     float qx = clampf(p->x, (float)x, (float)x + 1), qz = clampf(p->z, (float)z, (float)z + 1);
     return (qx - p->x) * (qx - p->x) + (qz - p->z) * (qz - p->z) < PR * PR;
 }
 
-/* 켜진 감지기 묶음 (물체 번호별 비트). 감지기의 lit는 지난 빛 계산 결과다 */
+/* set of lit sensors (one bit per object). A sensor's lit is the previous light result */
 static unsigned sensor_mask(int *count)
 {
     unsigned m = 0;
@@ -70,14 +70,14 @@ static unsigned sensor_mask(int *count)
     return m;
 }
 
-/* 발판·감지기와 창살: 발판은 그 칸에 서 있는 사람이나 놓인 물체가 누른다. 감지기는 빛을 받으면 켜진다.
- * 창살은 연결 번호(link, 0~3)가 같은 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 열린다.
- * 사람이 걸쳐 있는 창살 칸은 닫지 않는다(끼이지 않게). */
+/* plates, sensors and gates: a plate is pressed by a person standing on it or an object on it; a sensor is lit by light.
+ * A gate is open while every plate with its link number (0-3) is pressed and every such sensor is lit.
+ * A gate cell with a person on it never closes (no one gets stuck). */
 static void update_plates(void)
 {
     const Level *lv = &g_levels[g_cur_level];
     int plates[4] = { 0 }, all[4] = { 1, 1, 1, 1 };
-    for (int i = 0; i < g_nobj; i++)                      /* 감지기 (지난 빛 계산 결과) */
+    for (int i = 0; i < g_nobj; i++)                      /* sensors (previous light result) */
         if (g_obj[i].kind == O_SENSOR) {
             int c = lv->chan[g_obj[i].z][g_obj[i].x] & 3;
             plates[c]++;
@@ -103,10 +103,10 @@ static void update_plates(void)
         }
 }
 
-/* 발판·창살을 갱신하고, 빛을 다시 계산한 뒤(모든 플레이어의 몸이 빛을 가림), 결과에 따라 문을 연다.
- * 창살과 문 블록은 빛을 막으므로 순서는 반드시 "발판·창살 → 빛 계산 → 문 갱신"이다.
- * 감지기가 켜지거나 꺼져 창살이 바뀌면 빛길도 바뀌므로, 감지기가 더 바뀌지 않을 때까지 몇 번 되풀이한다
- * (창살이 감지기로 가는 빛을 스스로 막는 방이면 4번에서 멈춘다) */
+/* Update plates and gates, recompute the light (every player body blocks it), then open doors from the result.
+ * Gate and door blocks stop light, so the order must stay "plates and gates -> light -> doors".
+ * Sensors switching gates changes the light paths, so repeat until no sensor changes
+ * (stops after 4 passes in a room where a gate blocks the light to its own sensor) */
 int g_sim_us;
 
 void game_simulate(void)
@@ -126,13 +126,13 @@ void game_simulate(void)
     g_sim_us = (int)(now_us() - t0);
 }
 
-/* 지금 방의 시작 칸 가운데에, 정해진 방향을 보고 선다.
- * 두 번째 플레이어부터는 시작 칸 둘레의 빈 바닥에 선다 */
+/* stand in the centre of the room's start cell, facing the given way.
+ * The second player stands on empty floor around the start cell */
 static void place_player(int p)
 {
     static const int NB[9][2] = { { 0, 0 }, { 0, 1 }, { 0, -1 }, { -1, 0 }, { 1, 0 }, { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } };
     const Level *lv = &g_levels[g_cur_level];
-    int own = p == 1 && lv->has_start2;                   /* 나뉜 방: 2번 플레이어는 자기 시작 칸에 선다 */
+    int own = p == 1 && lv->has_start2;                   /* split room: player 2 stands on their own start cell */
     int bx = own ? lv->sx2 : lv->sx, bz = own ? lv->sz2 : lv->sz, x = bx, z = bz;
     char face = own ? lv->face2 : lv->face;
     for (int k = p && !own ? 1 : 0; k < 9; k++) {
@@ -161,17 +161,17 @@ void game_init(int level)
 void game_solve_setup(void)
 {
     const Level *lv = &g_levels[g_cur_level];
-    if (lv->has_stand) {                                  /* 누군가 정해진 칸에 서 있어야 풀리는 방 (2인용 방, 발판 방) */
+    if (lv->has_stand) {                                  /* rooms solved only while someone stands on a given cell (two-player rooms, plate rooms) */
         g_pl[1].on = 1;
         g_pl[1].x = (float)lv->stand_x + 0.5f;
         g_pl[1].z = (float)lv->stand_z + 0.5f;
     }
-    if (lv->has_stand2) {                                 /* 두 사람이 모두 서 있어야 하는 방 */
+    if (lv->has_stand2) {                                 /* rooms where two people must stand */
         g_pl[0].on = 1;
         g_pl[0].x = (float)lv->stand2_x + 0.5f;
         g_pl[0].z = (float)lv->stand2_z + 0.5f;
     }
-    for (int i = 0; i < lv->nmove; i++) {                 /* 물체를 옮겨야 풀리는 방 (상자를 발판이나 빛길에) */
+    for (int i = 0; i < lv->nmove; i++) {                 /* rooms solved only after moving objects (boxes onto plates or into beams) */
         const signed char *m = lv->move[i];
         int oi = g_objat[m[1]][m[0]];
         if (!oi || g_objat[m[3]][m[2]]) continue;
@@ -181,7 +181,7 @@ void game_solve_setup(void)
     }
 }
 
-/* 회전 가능한 물체의 모든 각도를 시험해 푸는 방법을 찾는다 (시험과 스크린샷용) */
+/* try every angle of the turnable objects to find a solution (tests and screenshots) */
 int game_solve(void)
 {
     int idx[SOLVE_MAX_MIRRORS], k = 0;
@@ -198,9 +198,9 @@ int game_solve(void)
     return 0;
 }
 
-/* ---------- 알림 ---------- */
+/* ---------- messages ---------- */
 
-/* 물체 이름 뒤에 붙일 조사: 마지막 글자에 받침이 있으면 a("을", "은", "이"), 없으면 b("를", "는", "가") */
+/* Korean particle after an object name: a ("을", "은", "이") if the last syllable has a final consonant, else b ("를", "는", "가") */
 static const char *josa(int kind, const char *a, const char *b)
 {
     const unsigned char *s = (const unsigned char *)KIND_NAME[kind];
@@ -228,11 +228,11 @@ void game_message(int p, const char *fmt, ...)
     }
 }
 
-/* ---------- 플레이어 조작 ---------- */
+/* ---------- player actions ---------- */
 
 static void after_change(void)
 {
-    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].hint_t = 0;   /* 상태가 바뀌면 힌트는 맞지 않을 수 있다 */
+    for (int i = 0; i < MAXPLAYER; i++) g_pl[i].hint_t = 0;   /* after a change the hint may no longer fit */
     int was = g_solved;
     game_simulate();
     g_moves++;
@@ -240,7 +240,7 @@ static void after_change(void)
     if (g_solved && !was) game_message(-1, "모든 수정이 빛났어요! 문이 열렸습니다 (%d번 조작)", g_moves);
 }
 
-/* 조작하기 전 상태를 기억한다. 가득 차면 가장 오래된 것을 버린다 */
+/* remember the state before a move; when full, drop the oldest */
 static void push_undo(void)
 {
     if (s_nundo == MAXUNDO) {
@@ -252,8 +252,8 @@ static void push_undo(void)
     for (int i = 0; i < MAXPLAYER; i++) u->carry[i] = g_pl[i].carry;
 }
 
-/* 마지막 조작을 되돌린다. 되돌리면 물체가 놓일 칸에 사람이 서 있거나,
- * 그때 물체를 들고 있던 사람이 나갔으면 되돌리지 않는다 (사람이 물체에 끼이거나 물체가 사라지지 않게) */
+/* undo the last move. Refuse if a person now stands where an object would return,
+ * or the person who carried it then has left (no one stuck in an object, no object lost) */
 static void undo(int p)
 {
     if (!s_nundo) { game_message(p, "되돌릴 조작이 없어요"); return; }
@@ -287,16 +287,16 @@ static void undo(int p)
 static int cell_free(int x, int z)
 {
     return x > 0 && z > 0 && x < RW - 1 && z < RD - 1 && g_blk[1][z][x] == B_AIR && !g_objat[z][x] &&
-           g_levels[g_cur_level].map[z][x] != '=';       /* 열린 창살 칸에는 물체를 놓을 수 없다 */
+           g_levels[g_cur_level].map[z][x] != '=';       /* nothing can be placed on an open gate cell */
 }
 
-/* self의 몸(원)을 (x, z)에 두면 벽, 유리, 물체 칸, 다른 플레이어와 겹치는가 */
+/* with self's body (circle) at (x, z), does it overlap a wall, glass, an object cell or another player */
 static int circle_hits(int self, float x, float z)
 {
     for (int cz = (int)floorf(z - PR); cz <= (int)floorf(z + PR); cz++)
         for (int cx = (int)floorf(x - PR); cx <= (int)floorf(x + PR); cx++) {
             int solid = cx < 0 || cz < 0 || cx >= RW || cz >= RD || g_blk[1][cz][cx] != B_AIR || g_objat[cz][cx] ||
-                        g_blk[0][cz][cx] == B_HATCH;      /* 전달 창구는 사람이 지나갈 수 없다 */
+                        g_blk[0][cz][cx] == B_HATCH;      /* people cannot pass a hatch */
             if (!solid) continue;
             float qx = clampf(x, (float)cx, (float)cx + 1), qz = clampf(z, (float)cz, (float)cz + 1);
             if ((qx - x) * (qx - x) + (qz - z) * (qz - z) < PR * PR) return 1;
@@ -309,7 +309,7 @@ static int circle_hits(int self, float x, float z)
     return 0;
 }
 
-/* 겨누기: 1인칭은 화면 가운데 광선(4.5칸까지), 내려다보기는 플레이어 바로 앞 칸 */
+/* aiming: first person uses the centre ray (up to 4.5 cells), top-down the cell right in front */
 void game_find_target(int p)
 {
     Player *pl = &g_pl[p];
@@ -332,7 +332,7 @@ void game_find_target(int p)
             else if (tmy < tmz) { t = tmy; y += sy; tmy += tdy; axis = 1; }
             else { t = tmz; z += sz; tmz += tdz; axis = 2; }
             if (t > 4.5f || x < 0 || z < 0 || x >= RW || z >= RD || y < 0) return;
-            if (in_hatch && axis != 1) return;            /* 전달 창구 너머(상대 방)의 물체나 바닥은 겨눌 수 없다 */
+            if (in_hatch && axis != 1) return;            /* objects and floor beyond a hatch (the other room) cannot be aimed at */
             if (y >= RH) continue;
             if (y == 1 && g_objat[z][x]) { pl->tobj = g_objat[z][x] - 1; return; }
             int b = g_blk[y][z][x];
@@ -347,7 +347,7 @@ void game_find_target(int p)
         if (g_objat[z][x]) pl->tobj = g_objat[z][x] - 1;
         else if (cell_free(x, z)) { pl->tx = x; pl->tz = z; }
     }
-    if (pl->tx >= 0)                                      /* 누군가 서 있는 칸에는 못 놓는다 */
+    if (pl->tx >= 0)                                      /* nothing can be placed where someone stands */
         for (int i = 0; i < MAXPLAYER; i++)
             if (g_pl[i].on && body_on_cell(&g_pl[i], pl->tx, pl->tz)) { pl->tx = pl->tz = -1; break; }
 }
@@ -390,7 +390,7 @@ static void rotate(int p, int d)
     after_change();
 }
 
-/* 지금 방을 처음 상태로 만들고 모두 시작 칸에 선다 */
+/* put the room back in its starting state, everyone on the start cells */
 static void restart_room(void)
 {
     s_nundo = 0;
@@ -404,7 +404,7 @@ static void restart_room(void)
         if (g_pl[i].on) game_find_target(i);
 }
 
-/* 열린 문을 지났다: 다음 방으로, 마지막 방이면 끝 */
+/* went through the open door: next room, or the end after the last one */
 static void through_door(void)
 {
     int rec = g_record ? progress_record(g_levels[g_cur_level].file, g_moves) : 0, moves = g_moves;
@@ -419,7 +419,7 @@ static void through_door(void)
     }
 }
 
-/* ---------- 힌트 ---------- */
+/* ---------- hints ---------- */
 
 static void set_hint(int p, int obj, int x, int z, const char *fmt, ...) __attribute__((format(printf, 5, 6)));
 static void set_hint(int p, int obj, int x, int z, const char *fmt, ...)
@@ -429,12 +429,12 @@ static void set_hint(int p, int obj, int x, int z, const char *fmt, ...)
     va_start(ap, fmt);
     vmessage(pl, fmt, ap);
     va_end(ap);
-    pl->msg_t = pl->hint_t = 240;                         /* 8초 */
+    pl->msg_t = pl->hint_t = 240;                         /* 8 seconds */
     pl->hint_obj = obj; pl->hint_x = x; pl->hint_z = z;
 }
 
-/* 처음 상태에서 푼 답(방 파일의 stand·move 포함)을 구해 지금 상태와 비교하고, 다음에 할 일 하나를 알려 준다.
- * 풀이를 찾는 동안 바꾼 월드와 플레이어는 모두 되돌려 놓는다 */
+/* Solve from the starting state (with the level's stand and move lines), compare with now, and name one next step.
+ * Everything changed in the world and the players while solving is put back */
 static void hint(int p)
 {
     static Obj obj[MAXOBJ];
@@ -447,7 +447,7 @@ static void hint(int p)
     memcpy(blk, g_blk, sizeof blk);
     memcpy(pl, g_pl, sizeof pl);
 
-    load_level();                                         /* 처음 상태에서 사람 없이 (stand가 있으면 그 칸에만) 푼다 */
+    load_level();                                         /* solve from the start with nobody in the room (or only on the stand cells) */
     for (int i = 0; i < MAXPLAYER; i++) g_pl[i].on = 0;
     game_solve_setup();
     int ok = game_solve(), sx[MAXOBJ], sz[MAXOBJ], srot[MAXOBJ];
@@ -464,18 +464,18 @@ static void hint(int p)
     Player *me = &g_pl[p];
     if (g_solved) { set_hint(p, -1, -1, -1, "문이 열려 있어요. 문으로 걸어 나가세요"); return; }
     if (!ok) { set_hint(p, -1, -1, -1, "이 방은 힌트를 찾지 못했어요"); return; }
-    if (me->carry >= 0) {                                 /* 든 물체를 놓을 자리 */
+    if (me->carry >= 0) {                                 /* where to put what you carry */
         int c = me->carry;
         set_hint(p, -1, sx[c], sz[c], "들고 있는 %s%s 노란 칸에 내려놓으세요", KIND_NAME[g_obj[c].kind], josa(g_obj[c].kind, "을", "를"));
         return;
     }
-    for (int i = 0; i < g_nobj; i++) {                    /* 자리가 다른 물체 (다른 사람이 든 것은 빼고) */
+    for (int i = 0; i < g_nobj; i++) {                    /* an object in the wrong place (not one someone else carries) */
         const Obj *o = &g_obj[i];
         if (o->held || (o->x == sx[i] && o->z == sz[i])) continue;
         set_hint(p, i, sx[i], sz[i], "테두리 친 %s%s 노란 칸으로 옮기세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"));
         return;
     }
-    for (int i = 0; i < g_nobj; i++) {                    /* 각도가 다른 거울: 가까운 쪽으로 돌리라고 한다 (8단계가 180도) */
+    for (int i = 0; i < g_nobj; i++) {                    /* a mirror at the wrong angle: turn it the short way (8 steps = 180 degrees) */
         const Obj *o = &g_obj[i];
         if (o->held || (o->kind != O_MIRROR && o->kind != O_SPLIT)) continue;
         int d = ((srot[i] - o->rot) % 8 + 8) % 8;
@@ -484,7 +484,7 @@ static void hint(int p)
         else set_hint(p, i, -1, -1, "테두리 친 %s%s E로 %d번 돌리세요", KIND_NAME[o->kind], josa(o->kind, "을", "를"), d);
         return;
     }
-    for (int k = 0; k < 2; k++) {                         /* 누군가 서서 빛을 막거나 발판을 눌러야 하는 방 */
+    for (int k = 0; k < 2; k++) {                         /* rooms where someone must stand to block light or press a plate */
         int has = k ? lv->has_stand2 : lv->has_stand, x = k ? lv->stand2_x : lv->stand_x, z = k ? lv->stand2_z : lv->stand_z;
         if (!has) continue;
         int taken = g_objat[z][x] != 0;
@@ -526,7 +526,7 @@ void game_leave(int p)
 {
     Player *pl = &g_pl[p];
     if (!pl->on) return;
-    if (pl->carry >= 0) {                                 /* 든 물체는 발밑이나 둘레의 빈 칸에 내려놓는다 */
+    if (pl->carry >= 0) {                                 /* put what they carried on the floor under them or an empty cell around */
         int px = (int)floorf(pl->x), pz = (int)floorf(pl->z);
         for (int k = 0; k < 9; k++) {
             int x = px + k % 3 - 1, z = pz + k / 3 - 1;
@@ -544,7 +544,7 @@ void game_leave(int p)
     game_message(-1, "%d번 플레이어가 나갔어요", p + 1);
 }
 
-/* ---------- 이 터미널의 키 ---------- */
+/* ---------- this terminal's keys ---------- */
 
 void game_view_key(int vk)
 {
@@ -619,7 +619,11 @@ static void guide_start(const Player *me)
     s_guide.n = s_guide.i = 0;
     if (gx >= 0) {                                        /* walk the path back from the goal */
         int len = 0, c = gz * RW + gx;
-        while (c != sz * RW + sx && len < RW * RD) { s_guide.px[len] = (signed char)(c % RW); s_guide.pz[len++] = (signed char)(c / RW); c = prev[c / RW][c % RW]; }
+        while (c != sz * RW + sx && len < RW * RD) {
+            s_guide.px[len] = (signed char)(c % RW);
+            s_guide.pz[len++] = (signed char)(c / RW);
+            c = prev[c / RW][c % RW];
+        }
         for (int i = 0; i < len / 2; i++) {               /* reverse: start -> goal */
             signed char t = s_guide.px[i]; s_guide.px[i] = s_guide.px[len - 1 - i]; s_guide.px[len - 1 - i] = t;
             t = s_guide.pz[i]; s_guide.pz[i] = s_guide.pz[len - 1 - i]; s_guide.pz[len - 1 - i] = t;
@@ -661,7 +665,7 @@ static void guide_tick(float dt)
     }
 }
 
-/* 마우스로 정하는 시선 (마우스 잠금 도우미가 연결되어 있고 1인칭일 때) */
+/* view set by the mouse (mouse-lock helper connected, first person) */
 int g_look_local;
 
 void game_mouse_look(float dx, float dy)
@@ -677,7 +681,7 @@ unsigned game_local_keys(void)
     unsigned k = (input_held('W') ? K_W : 0) | (input_held('A') ? K_A : 0) | (input_held('S') ? K_S : 0) | (input_held('D') ? K_D : 0) |
            (input_held(VK_LEFT) ? K_LEFT : 0) | (input_held(VK_RIGHT) ? K_RIGHT : 0) |
            (input_held(VK_UP) ? K_UP : 0) | (input_held(VK_DOWN) ? K_DOWN : 0) | (input_held(VK_SHIFT) ? K_RUN : 0);
-    if (bridge_connected()) {                              /* 도우미가 읽은 실제 키 상태 (창이 맨 앞일 때만 연결로 친다) */
+    if (bridge_connected()) {                              /* the real key state the helper reads (counts only while the game window is in front) */
         uint32_t b = bridge_keys();
         k |= (b & KB_W ? K_W : 0) | (b & KB_A ? K_A : 0) | (b & KB_S ? K_S : 0) | (b & KB_D ? K_D : 0) |
              (b & KB_LEFT ? K_LEFT : 0) | (b & KB_RIGHT ? K_RIGHT : 0) | (b & KB_UP ? K_UP : 0) | (b & KB_DOWN ? K_DOWN : 0) |
@@ -686,9 +690,9 @@ unsigned game_local_keys(void)
     return k;
 }
 
-/* ---------- 틱 ---------- */
+/* ---------- tick ---------- */
 
-/* 걷기 (벽에 미끄러지며), 몸이 움직이면 빛 다시 계산, 열린 문에 들어가면 다음 방 */
+/* walk (sliding along walls), recompute light when a body moves, next room when walking into an open door */
 static void player_tick(int p, float dt)
 {
     Player *pl = &g_pl[p];
@@ -719,7 +723,7 @@ static void player_tick(int p, float dt)
         if (!circle_hits(p, pl->x, pl->z + vz)) { pl->z += vz; moved = 1; }
         if (moved) {
             int was = g_solved;
-            game_simulate();                              /* 몸이 빛줄기를 가릴 수 있다 */
+            game_simulate();                              /* the body may block a beam */
             if (g_solved && !was) game_message(-1, "모든 수정이 빛났어요! 문이 열렸습니다");
             if (g_solved && world_is_door((int)floorf(pl->x), (int)floorf(pl->z))) through_door();
         }
@@ -733,7 +737,7 @@ void game_tick(float dt)
     me->walk_yaw = cam_yaw;
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) { player_tick(i, dt); game_find_target(i); }
-    cam_yaw += (cam_yaw_target - cam_yaw) * 0.25f;        /* 카메라는 부드럽게 돈다 */
+    cam_yaw += (cam_yaw_target - cam_yaw) * 0.25f;        /* the camera turns smoothly */
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].msg_t > 0) g_pl[i].msg_t--;
     for (int i = 0; i < MAXPLAYER; i++)
@@ -750,19 +754,19 @@ void game_local_tick(void)
     guide_tick(1.0f / 30);                                /* the guide follows the hint the host sent */
 }
 
-/* ---------- 렌더러와 시험용 ---------- */
+/* ---------- renderer and tests ---------- */
 
 void game_view(View *v)
 {
     static Body bodies[MAXPLAYER + 1];
     const Player *me = &g_pl[g_me];
     int n = 0;
-    for (int i = 0; i < MAXPLAYER; i++)                   /* 1인칭에서는 내 몸은 그리지 않는다 */
+    for (int i = 0; i < MAXPLAYER; i++)                   /* in first person your own body is not drawn */
         if (g_pl[i].on && !(i == g_me && me->fp)) bodies[n++] = (Body){ g_pl[i].x, g_pl[i].z, i, g_pl[i].y };
     if (s_guide.on)                                       /* the hint guide floats and bobs a little */
         bodies[n++] = (Body){ s_guide.x, s_guide.z, BODY_GUIDE, 0.15f + 0.07f * sinf(s_guide.bob * 4) };
     int tx = me->tx, tz = me->tz, sel = me->tobj;
-    if (me->hint_t > 0 && (me->hint_t / 10) % 3 != 0) {   /* 힌트: 물체 테두리와 칸 표시를 깜빡이며 보여 준다 */
+    if (me->hint_t > 0 && (me->hint_t / 10) % 3 != 0) {   /* hint: blink the object outline and the cell mark */
         if (me->hint_obj >= 0) sel = me->hint_obj;
         if (me->hint_x >= 0) { tx = me->hint_x; tz = me->hint_z; }
     }

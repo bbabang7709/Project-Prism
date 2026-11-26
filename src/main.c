@@ -1,14 +1,14 @@
 /*
- * PRISM - 터미널 3D 광학 퍼즐
+ * PRISM - a terminal 3D optics puzzle
  *
- * 진입점: 명령행 옵션, 시험·스크린샷 모드, 시작 메뉴, 30fps 게임 루프 (혼자 / 호스트 / 참가).
+ * Entry point: command-line options, test and screenshot modes, the start menu, the 30 fps game loop (solo / host / join).
  *
- *   world     방 파일, 블록과 물체
- *   optics    빛 시뮬레이션 (반사, 분할, 분광, 굴절, 필터, 수정)
- *   renderer  복셀 레이캐스팅과 SDF 물체, 빛줄기 발광, 윤곽선 (멀티스레드)
- *   game      플레이어, 카메라, 겨누기, 들기·놓기·돌리기, 퍼즐 판정 / hud: 화면 정보 / menu: 시작 메뉴
- *   net       2인 협동 (TCP)
- *   platform  터미널 출력, 입력 해석, 시계
+ *   world     level files, blocks and objects
+ *   optics    light simulation (reflection, splitting, dispersion, refraction, filters, crystals)
+ *   renderer  voxel ray casting and SDF objects, glowing beams, outlines (multithreaded)
+ *   game      players, cameras, aiming, take/place/turn, puzzle checks / hud: screen info / menu: start menu
+ *   net       two-player co-op (TCP)
+ *   platform  terminal output, input parsing, clock, mouse-helper bridge
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -38,20 +38,20 @@
 #include "world/world.h"
 
 enum { UI_MENU, UI_PLAY, UI_EDIT };
-static int s_testing;                   /* 에디터에서 시험 플레이 중 (ESC로 에디터에 돌아간다) */
+static int s_testing;                   /* test play from the editor (ESC goes back to the editor) */
 static int s_ui = UI_PLAY;
-static int s_look = 1;                  /* V: 마우스로 시선 돌리기 (마우스 잠금 도우미가 연결되어 있을 때) */
-#define MOUSE_SENS 0.0022f              /* 마우스 한 칸(count)당 돌아가는 각도 (rad) */
+static int s_look = 1;                  /* V: mouse look (while the mouse-lock helper is connected) */
+#define MOUSE_SENS 0.0022f              /* view angle per mouse count (radians) */
 static const char *s_level_dir;         /* --levels */
-static int s_port = NET_PORT;           /* 메뉴에서 호스트로 시작할 때의 포트 */
+static int s_port = NET_PORT;           /* port used when hosting from the menu */
 static int s_frame;
 static uint64_t s_level_sig;            /* fingerprint of the level folder at the last load (hot reload) */
 static uint64_t levels_signature(const char *dir);
 
-/* ---------- 방 파일 ---------- */
+/* ---------- level files ---------- */
 
-/* 방 파일을 읽는다. dir을 주면 그 폴더만, 아니면 ./levels → 실행 파일 옆 levels → 기본 방 순서로 찾는다.
- * 잘못된 방 파일이 있으면 이유를 출력하고 0을 돌려준다 */
+/* Read the level files: only dir if given, otherwise ./levels -> levels next to the executable -> the built-in room.
+ * On a broken level file, print why and return 0 */
 static int load_levels(const char *dir)
 {
     char err[512];
@@ -61,7 +61,7 @@ static int load_levels(const char *dir)
         if (n == 0) snprintf(err, sizeof err, "%s: 방 파일(.lvl)이 없습니다", dir);
     } else {
         n = world_load_levels("levels", err, sizeof err);
-        if (n == 0) {                                     /* 다른 폴더에서 실행했을 때: 실행 파일 옆 */
+        if (n == 0) {                                     /* run from another folder: next to the executable */
             char exe[512];
             ssize_t len = readlink("/proc/self/exe", exe, sizeof exe - 16);
             if (len > 0) {
@@ -79,15 +79,15 @@ static int load_levels(const char *dir)
     return 1;
 }
 
-/* 혼자 하기는 2인용 방을 뺀다 */
+/* solo play leaves out two-player rooms */
 static void prepare_levels(int solo)
 {
-    load_levels(s_level_dir);                             /* 시작할 때 한 번 확인했으므로 실패하지 않는다 */
+    load_levels(s_level_dir);                             /* checked once at startup, so this does not fail */
     s_level_sig = levels_signature(g_level_dir);          /* hot reload compares against this */
     if (solo) world_drop_coop();
 }
 
-/* ---------- 세션 시작과 끝 ---------- */
+/* ---------- starting and ending sessions ---------- */
 
 static void go_menu(const char *msg)
 {
@@ -96,8 +96,8 @@ static void go_menu(const char *msg)
     game_reset();
     prepare_levels(0);
     game_init(0);
-    game_solve();                                         /* 배경은 풀린 방을 보여 준다 */
-    progress_load();                                      /* 메뉴에 푼 방을 표시한다 */
+    game_solve();                                         /* the background shows the solved room */
+    progress_load();                                      /* show solved rooms in the menu */
     menu_open(msg);
     s_ui = UI_MENU;
 }
@@ -106,7 +106,7 @@ static void start_solo(int level)
 {
     game_reset();
     prepare_levels(1);
-    g_record = 1;                                         /* 푼 방을 진행 기록에 남긴다 */
+    g_record = 1;                                         /* record solved rooms in the progress file */
     game_init(level < g_nlevels ? level : 0);
     game_find_target(g_me);
     game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
@@ -131,7 +131,7 @@ static void start_join(const char *addr)
     char err[256], what[300];
     snprintf(what, sizeof what, "%s에 접속하는 중...", addr);
     menu_message(what);
-    menu_draw(s_frame);                                   /* 기다리는 동안 보일 화면 (최대 5초) */
+    menu_draw(s_frame);                                   /* screen shown while waiting (up to 5 s) */
     game_reset();
     if (net_join(addr, err, sizeof err) < 0) { go_menu(err); return; }
     s_ui = UI_PLAY;
@@ -228,9 +228,9 @@ static void reload_levels(void)
     game_message(-1, "방 파일이 바뀌어 다시 만들었어요: %s", g_levels[idx].name);
 }
 
-/* ---------- 입력 사건 연결 ---------- */
+/* ---------- wiring input events ---------- */
 
-/* 이 터미널 플레이어의 조작: 참가자는 호스트로 보내고, 혼자나 호스트는 바로 처리한다 */
+/* this terminal player's action: a joiner sends it to the host, solo and host handle it here */
 static void do_action(int act)
 {
     if (net_mode() == NET_CLIENT) net_send_action(act);
@@ -245,7 +245,7 @@ static void on_text(int ch)
     else if (s_ui == UI_EDIT) editor_text(ch);
 }
 
-/* 레벨 에디터 열기: level번 방을 고친다 (-1이면 새 방) */
+/* open the level editor on room level (-1 = new room) */
 static void start_edit(int level)
 {
     game_reset();
@@ -256,7 +256,7 @@ static void start_edit(int level)
     s_ui = UI_EDIT;
 }
 
-/* 에디터의 방을 그대로 혼자 해 본다 */
+/* play the editor's room solo as it is */
 static void start_test(void)
 {
     Level lv = *editor_level();
@@ -301,11 +301,11 @@ static void on_press(int vk)
     else if (vk == 'P') hud_toggle_perf();
     else if (vk == 'V' && !bridge_connected())            /* nothing to toggle without the Windows mouse helper */
         game_message(g_me, "마우스 시선은 Windows에서 mouselock 도우미를 실행했을 때만 쓸 수 있어요");
-    else if (vk == 'V') {                                 /* 마우스 시선 켜기/끄기 (포인터 잠금도 같이) */
+    else if (vk == 'V') {                                 /* mouse look on/off (and the pointer lock with it) */
         s_look = !s_look;
         game_message(g_me, s_look ? "마우스 시선 켜짐: 마우스로 둘러봐요 (V로 끄기)" : "마우스 시선 꺼짐: 포인터가 풀렸어요 (V로 켜기)");
     }
-    else if (vk == 'G') {                                 /* 화면 방식 바꾸기 */
+    else if (vk == 'G') {                                 /* switch display mode */
         hud_set_quad(!hud_quad());
         game_message(g_me, hud_quad() ? "선명한 화면: 한 칸에 2×2 픽셀" : "반블록 화면: 한 칸에 1×2 픽셀 (블록 글자 이음매가 보이면)");
     }
@@ -322,16 +322,16 @@ static void on_press(int vk)
 static void on_quit(void) { g_quit = 1; }
 
 /*
- * 마우스 잠금 도우미(tools/mouselock.c)가 연결되어 있으면 1인칭에서 마우스로 시선을 돌린다.
- * 도우미는 게임이 보내는 L(잠금)·U(풀기)에 따라 포인터를 숨기고 창 가운데에 고정하거나 푼다.
- * 1인칭 플레이 중이 아니면(메뉴, 에디터, 내려다보기) 포인터를 풀어 둔다.
+ * With the mouse-lock helper (tools/mouselock.c) connected, the mouse turns the view in first person.
+ * The helper hides the pointer and pins it to the window centre on the game's L (lock), or frees it on U (unlock).
+ * Outside first-person play (menu, editor, top-down) the pointer is left free.
  */
 static void mouse_look_update(void)
 {
     static int was_want = -1, was_conn = 0;
     int want = s_ui == UI_PLAY && g_pl[g_me].fp && s_look;
     int conn = bridge_connected();
-    if (want != was_want || conn != was_conn) {        /* 도우미가 새로 연결되거나 창이 맨 앞이 되면 상태를 다시 알려 준다 */
+    if (want != was_want || conn != was_conn) {        /* tell the helper again when it (re)connects or the window comes to the front */
         bridge_send(want ? 'L' : 'U');
         if (conn && !was_conn && s_ui == UI_PLAY) game_message(g_me, "마우스 시선 연결됨: 마우스로 둘러봐요 (V로 끄기)");
         was_want = want;
@@ -343,7 +343,7 @@ static void mouse_look_update(void)
     if (g_look_local && (dx || dy)) game_mouse_look(dx * MOUSE_SENS, dy * MOUSE_SENS);
 }
 
-/* ---------- 진입점 ---------- */
+/* ---------- entry point ---------- */
 
 int main(int argc, char **argv)
 {
@@ -365,7 +365,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--halfblock")) hud_set_quad(0);
         else if (!strcmp(argv[i], "--full-res")) hud_set_autores(0);   /* no dynamic resolution (benchmarks) */
         else if (!strcmp(argv[i], "--guide") && i + 1 < argc) guide_ticks = atoi(argv[++i]);   /* dev: hint, then simulate n ticks */
-        else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* 개발용: 터미널 화면 미리보기 PNG */
+        else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* development: PNG preview of the terminal screen */
             shot = argv[++i];
             term_cols = atoi(argv[++i]); term_rows = atoi(argv[++i]);
             if (term_cols < 20 || term_rows < 10 || term_cols > MAX_W || term_rows > MAX_H) {
@@ -401,13 +401,13 @@ int main(int argc, char **argv)
     if (join && host_port) { fprintf(stderr, "prism: --host와 --join은 함께 쓸 수 없습니다\n"); return 1; }
     if (host_port) s_port = host_port;
     char err[256];
-    if (join) {                                           /* 참가: 방과 상태는 호스트에게서 받는다 */
+    if (join) {                                           /* join: the room and state come from the host */
         if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) { fprintf(stderr, "prism: run this in a terminal\n"); return 1; }
-        if (!load_levels(s_level_dir)) return 1;          /* 메뉴로 돌아왔을 때 쓸 방 */
+        if (!load_levels(s_level_dir)) return 1;          /* rooms to use after returning to the menu */
         if (net_join(join, err, sizeof err) < 0) { fprintf(stderr, "prism: %s\n", err); return 1; }
     } else {
         if (!load_levels(s_level_dir)) return 1;
-        if (!host_port && !check && !shot) world_drop_coop();   /* 혼자서는 2인용 방을 건너뛴다 */
+        if (!host_port && !check && !shot) world_drop_coop();   /* solo skips two-player rooms */
         if (level < 1 || level > g_nlevels) {
             fprintf(stderr, "prism: 방 번호는 1~%d입니다 (%d)\n", g_nlevels, level);
             return 1;
@@ -422,7 +422,7 @@ int main(int argc, char **argv)
         if (fp_shot) { p0->x = fx; p0->z = fz; p0->yaw = fyaw; p0->pitch = fpitch; }
         if (check) game_print_state("start");
         if (do_solve) {
-            game_solve_setup();                           /* 방 파일의 stand·move 적용 */
+            game_solve_setup();                           /* apply the level's stand and move lines */
             int ok = game_solve();
             if (check) game_print_state(ok ? "solved" : "no solution found");
         }
@@ -433,7 +433,7 @@ int main(int argc, char **argv)
             if (check) printf("hint: %s\n", p0->msg);
         }
         if (sel >= 0 && sel < g_nobj) p0->tobj = sel;
-        if (shot && term_cols) {                          /* 터미널 화면 미리보기: 칸으로 옮긴 결과를 블록 모양 그대로 그린다 */
+        if (shot && term_cols) {                          /* terminal preview: draw the cells' block characters as they would appear */
             g_cols = term_cols;
             g_rows = term_rows;
             int W, H;
@@ -450,7 +450,7 @@ int main(int argc, char **argv)
             renderer_write_png(shot, g_cols * cw, g_rows * cw * 2, 1);
             printf("wrote %s (%dx%d cells, %s)\n", shot, g_cols, g_rows, hud_quad() ? "2x2 quadrant" : "half block");
         } else if (shot) {
-            int W = shot_w, H = shot_h, cr = W / 120 > 2 ? W / 120 : 2;   /* 기본 720×420을 그대로 그린다 (늘리지 않음) */
+            int W = shot_w, H = shot_h, cr = W / 120 > 2 ? W / 120 : 2;   /* draws the default 720x420 as is (no scaling) */
             View view;
             game_view(&view);
             int64_t t0 = now_us();
@@ -506,7 +506,7 @@ int main(int argc, char **argv)
         game_find_target(g_me);
         game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
     } else if (net_mode() == NET_OFF)
-        go_menu(NULL);                                    /* 옵션 없이 실행: 시작 메뉴 */
+        go_menu(NULL);                                    /* no options: the start menu */
     int64_t fps_t0 = now;
     int fps = 0, fps_n = 0;
     watch_levels();                                       /* hot reload: inotify on the level folder */
@@ -523,16 +523,16 @@ int main(int argc, char **argv)
         now = now_ms();
         input_set_time(now);
         if (pf[0].revents & POLLIN) input_read();
-        if (input_esc_expired()) on_press(VK_ESC);        /* ESC 키 단독 */
+        if (input_esc_expired()) on_press(VK_ESC);        /* the ESC key alone */
         if (pf[2].revents & POLLIN) on_level_events(now);
         if (now - sig_check >= 1000) {                    /* fallback for edits inotify cannot see */
             sig_check = now;
             if (!s_reload_at && levels_signature(g_level_dir) != s_level_sig) s_reload_at = now;
         }
         if (s_reload_at && now >= s_reload_at) { s_reload_at = 0; reload_levels(); }
-        mouse_look_update();                              /* 마우스 잠금 도우미: 시선과 포인터 잠금 */
-        net_handle(pf + 3, nnet);                         /* 접속 받기, 받은 메시지 처리 */
-        if (net_lost()) {                                 /* 호스트와 끊어졌다: 이유를 보여 주며 메뉴로 */
+        mouse_look_update();                              /* mouse-lock helper: view and pointer lock */
+        net_handle(pf + 3, nnet);                         /* accept connections, handle received messages */
+        if (net_lost()) {                                 /* lost the host: back to the menu showing why */
             char why[160];
             snprintf(why, sizeof why, "%s", net_lost());
             go_menu(why);
@@ -545,7 +545,7 @@ int main(int argc, char **argv)
             else {
                 if (net_mode() == NET_CLIENT) game_local_tick();
                 else game_tick(1.0f / 30);
-                net_after_tick();                         /* 호스트는 상태를, 참가자는 키를 보낸다 */
+                net_after_tick();                         /* host sends the state, joiner sends its keys */
                 hud_draw(s_frame++, fps, net_status());
             }
             fps_n++;
@@ -556,7 +556,7 @@ int main(int argc, char **argv)
             }
         }
     }
-    bridge_stop();                                        /* 도우미에게 포인터를 풀고 끝내라고 알린다 */
+    bridge_stop();                                        /* tell the helper to free the pointer and quit */
     term_restore();
     net_close();
     renderer_shutdown();

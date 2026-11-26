@@ -1,30 +1,30 @@
 /*
- * 월드: 방 파일(레벨), 복셀 블록, 물체 목록, 칸별 물체 번호.
+ * World: level files, voxel blocks, the object list, and the object number of each cell.
  *
- * 소유 규칙
- *   g_levels 방 파일에서 읽은 방들. world_load_levels / world_use_builtin이 채운다.
- *   g_blk    load_level, world_set_door가 쓴다. 나머지 모듈은 읽기만 한다.
- *   g_obj    위치와 각도(x, z, rot, held)는 게임이, got와 lit는 빛 시뮬레이션이 쓴다.
- *   g_objat  물체 번호 + 1 (0은 빈 칸). load_level과 게임(들기/놓기)이 쓴다.
+ * Ownership
+ *   g_levels the rooms read from level files; filled by world_load_levels / world_use_builtin.
+ *   g_blk    written by load_level and world_set_door; other modules only read it.
+ *   g_obj    position and angle (x, z, rot, held) belong to the game; got and lit to the light simulation.
+ *   g_objat  object number + 1 (0 = empty cell); written by load_level and the game (take/place).
  *
- * 방 파일 형식 (levels 폴더의 .lvl 파일, 이름 순서대로 방 1, 2, ...)
- *   # 주석               지도 앞에서 #로 시작하는 줄
- *   name 빛의 신전        방 이름
- *   start 2 8 E          시작 칸 (x z)과 바라보는 방향 E S W N
- *   rot 6 2 2            (x, z) 칸 물체의 처음 각도 0~7 (거울은 22.5도, 광원은 45도 단위)
- *   coop 11 9            2인용 방. 한 사람이 (x, z) 칸에 서서 빛을 막아야 풀린다 (혼자 할 때는 건너뜀). 칸 없이 "coop"만 써도 된다
- *   start2 12 4 W        2번 플레이어의 시작 칸과 방향 (나뉜 방에서 각자 다른 방에서 시작)
- *   link 4 5 1           (x, z)의 발판·감지기·창살을 1번 연결에 묶는다 (0~3, 기본 0).
- *                        창살은 같은 번호의 발판이 모두 눌리고 감지기가 모두 켜져 있는 동안 열린다
- *   stand 4 8            풀이 확인(--solve)에서 누군가 이 칸에 서 있다고 본다 (발판 방). 두 번 쓰면 두 사람
- *   move 3 9 13 7        풀이 확인에서 (3, 9) 칸의 물체를 (13, 7)로 옮긴 뒤에 푼다 (4줄까지, 상자 방)
- *   map                  다음 12줄이 16칸짜리 지도
- *   지도 글자: . 바닥  # 벽  | 기둥  D 문  g 유리  E 광원   P 프리즘  M 거울  S 반투명 거울
- *             b 파랑 필터  r 빨강 필터  R G B Y C V 수정 (빨강, 초록, 파랑, 노랑, 청록 = 초록+파랑, 자홍 = 빨강+파랑)
- *             _ 발판  = 창살 (발판이 모두 눌려 있고 감지기가 모두 빛을 받는 동안 열린다. 발판은 사람이나 물체가 누른다)
- *             O 감지기 (빛을 받으면 켜진다)  T 순간이동 고리 (방에 0개나 2개. 한쪽에 든 빛이 다른 쪽에서 같은 방향으로 나온다)
- *             K 상자 (들고 다닐 수 있다. 빛을 막고 발판을 누른다)
- *             h 전달 창구 (사람은 못 지나가고, 빛은 지나가고, 물체는 올려놓고 양쪽에서 집을 수 있다)
+ * Level file format (.lvl files in the levels folder; rooms 1, 2, ... in file name order)
+ *   # comment            lines starting with # before the map
+ *   name 빛의 신전        room name
+ *   start 2 8 E          start cell (x z) and facing E S W N
+ *   rot 6 2 2            starting angle 0-7 of the object at (x, z) (mirrors in 22.5 degree steps, emitters 45)
+ *   coop 11 9            two-player room: solved while someone stands at (x, z) blocking light (skipped when solo). "coop" alone also works
+ *   start2 12 4 W        player 2's start cell and facing (split rooms start each player in their own half)
+ *   link 4 5 1           ties the plate/sensor/gate at (x, z) to link 1 (0-3, default 0).
+ *                        a gate is open while every plate of its link is pressed and every sensor of it is lit
+ *   stand 4 8            for the solver (--solve): assume someone stands on this cell (plate rooms). Twice = two people
+ *   move 3 9 13 7        for the solver: move the object at (3, 9) to (13, 7) first (up to 4 lines, box rooms)
+ *   map                  the next 12 lines are the 16-column map
+ *   map characters: . floor  # wall  | pillar  D door  g glass  E emitter  P prism  M mirror  S half mirror
+ *             b blue filter  r red filter  R G B Y C V crystals (red, green, blue, yellow, cyan = green+blue, magenta = red+blue)
+ *             _ plate  = gate (open while every plate is pressed and every sensor is lit; people or objects press plates)
+ *             O sensor (lit by any light)  T portal (0 or 2 per room; light entering one leaves the other in the same direction)
+ *             K box (can be carried; stops light and presses plates)
+ *             h hatch (people cannot pass, light can, objects put on it can be taken from either side)
  */
 #ifndef PRISM_WORLD_H
 #define PRISM_WORLD_H
@@ -35,80 +35,80 @@
 
 #define MAXLEVEL 16
 
-enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE, B_HATCH };   /* 발판(안 눌림/눌림), 창살, 전달 창구 바닥 */
+enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE, B_HATCH };   /* plate (up/pressed), gate, hatch floor */
 enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX };
 
 typedef struct {
     int kind, x, z, rot, movable, held;
-    float col[3];             /* 광원 색, 필터 색, 수정이 원하는 색 */
-    float got[3];             /* 수정에 들어온 빛 */
+    float col[3];             /* emitter colour, filter colour, colour a crystal wants */
+    float got[3];             /* light that reached a crystal */
     int lit;
 } Obj;
 
 typedef struct {
     char name[64];
     char map[RD][RW + 1];
-    signed char rot[RD][RW];  /* 물체의 처음 각도 */
-    int sx, sz;               /* 시작 칸 */
-    char face;                /* 처음 바라보는 방향: 'E' 'S' 'W' 'N' */
-    int coop;                 /* 2인용 방 (혼자 할 때는 건너뛴다) */
-    int has_stand;            /* 풀이 확인용: 누군가 (stand_x, stand_z)에 서 있어야 풀린다 */
+    signed char rot[RD][RW];  /* starting angle of each object */
+    int sx, sz;               /* start cell */
+    char face;                /* starting facing: 'E' 'S' 'W' 'N' */
+    int coop;                 /* two-player room (skipped when solo) */
+    int has_stand;            /* for the solver: solved only while someone stands on (stand_x, stand_z) */
     int stand_x, stand_z;
-    int nmove;                /* 풀이 확인용: 물체를 옮긴 뒤에 풀린다 (move x1 z1 x2 z2) */
+    int nmove;                /* for the solver: solved after moving objects (move x1 z1 x2 z2) */
     signed char move[4][4];
-    char file[64];            /* 읽어 온 파일 이름 (폴더 빼고). 기본 방이나 새 방은 빈 문자열 */
-    signed char chan[RD][RW]; /* 발판·감지기·창살의 연결 번호 0~3 (link 줄) */
-    int has_start2, sx2, sz2; /* 2번 플레이어의 시작 칸 (start2 줄) */
+    char file[64];            /* file name it was read from (no folder); empty for the built-in room or a new room */
+    signed char chan[RD][RW]; /* link number 0-3 of plates, sensors and gates (link lines) */
+    int has_start2, sx2, sz2; /* player 2's start cell (start2 line) */
     char face2;
-    int has_stand2, stand2_x, stand2_z;   /* 풀이 확인용 두 번째 사람 (두 번째 stand 줄) */
-    char note[512];           /* 파일 맨 위의 설명 주석 줄들 ('#' 포함, 줄마다 '\n'). 에디터가 저장할 때 그대로 다시 쓴다 */
+    int has_stand2, stand2_x, stand2_z;   /* for the solver: a second person (second stand line) */
+    char note[512];           /* description comment lines at the top of the file ('#' included, '\n' after each); the editor writes them back */
 } Level;
 
-extern const char *KIND_NAME[];          /* O_* 번호로 찾는 물체 이름 */
-extern const float CHAN_COL[4][3];       /* 연결 번호별 색 (0: 청록, 1: 주황, 2: 분홍, 3: 하늘) */
+extern const char *KIND_NAME[];          /* object names, indexed by O_* */
+extern const float CHAN_COL[4][3];       /* colour of each link number (0 cyan, 1 orange, 2 pink, 3 sky blue) */
 
 extern Level g_levels[MAXLEVEL];
-extern int g_nlevels, g_cur_level;       /* 방 수, 지금 방 (0부터) */
+extern int g_nlevels, g_cur_level;       /* number of rooms, current room (from 0) */
 
 extern uint8_t g_blk[RH][RD][RW];
 extern Obj g_obj[MAXOBJ];
 extern int g_nobj, g_objat[RD][RW];
 
-/* dir 폴더의 *.lvl 파일을 이름 순서로 읽는다.
- * 읽은 방 수를 돌려준다. 폴더가 없으면 0, 파일이 잘못되었으면 -1과 err에 "파일:줄: 이유" */
+/* read the *.lvl files in dir in name order.
+ * Returns the number of rooms: 0 if the folder is missing, -1 with "file:line: reason" in err if a file is wrong */
 int world_load_levels(const char *dir, char *err, size_t errlen);
 
-/* 2인용 방(coop)을 목록에서 뺀다 (혼자 할 때) */
+/* remove two-player (coop) rooms from the list (solo play) */
 void world_drop_coop(void);
 
-/* 방 파일을 읽어 온 폴더 (방 파일이 없어 기본 방을 쓰면 "levels") */
+/* folder the level files came from ("levels" when the built-in room is used) */
 extern char g_level_dir[256];
 
-/* 방이 규칙에 맞는지 검사한다 (광원·수정이 있는가, 시작 칸이 빈 바닥인가, 테두리가 벽·문인가 등).
- * 맞으면 0, 아니면 -1과 err에 이유 */
+/* check that a room follows the rules (has an emitter and a crystal, starts on empty floor, border is wall/door, ...).
+ * 0 if it does, otherwise -1 with the reason in err */
 int world_check_level(const Level *lv, char *err, size_t errlen);
 
-/* 방을 g_level_dir/file로 저장한다. 같은 폴더의 임시 파일에 쓰고 fsync한 뒤 rename으로 바꿔 넣어,
- * 저장 도중 꺼져도 원래 파일이 깨지지 않는다. 성공하면 0 */
+/* save the room as g_level_dir/file: write a temp file in the same folder, fsync, then rename over the old one,
+ * so a crash while saving never corrupts the original. 0 on success */
 int world_save_level(const Level *lv, const char *file, char *err, size_t errlen);
 
-/* 새 방 파일 이름: 폴더에 있는 가장 큰 번호 + 1 ("07-custom.lvl") */
+/* name for a new level file: the largest number in the folder + 1 ("07-custom.lvl") */
 void world_new_file_name(char *out, size_t n);
 
-/* 방 파일 없이 기본 방 하나(원래 프로토타입의 방)를 쓴다 */
+/* use the one built-in room (the original prototype's room) when there are no level files */
 void world_use_builtin(void);
 
-/* 지금 방(g_cur_level)을 처음 상태로 만든다 */
+/* build the current room (g_cur_level) in its starting state */
 void load_level(void);
 
-/* 지금 방 지도의 문(D) 칸을 열거나(공기) 닫는다(문 블록) */
+/* open (air) or close (door blocks) the door (D) cells of the current room */
 void world_set_door(int open);
 
-/* 발판 칸의 눌림 표시, 창살 칸 열고 닫기 (언제 누르고 여는지는 게임이 정한다) */
+/* show plates as pressed, open or close gate cells (when is the game's decision) */
 void world_set_plate(int x, int z, int pressed);
 void world_set_gate(int x, int z, int open);
 
-/* (x, z)가 지금 방의 문 칸인가 */
+/* is (x, z) a door cell of the current room */
 int world_is_door(int x, int z);
 
 #endif

@@ -21,7 +21,7 @@ int input_win32(void) { return g_win32; }
 int input_esc_expired(void)
 {
     if (!(g_in_len == 1 && g_in[0] == 27 && g_esc_since && g_now - g_esc_since > 60)) return 0;
-    g_in_len = 0;                                        /* ESC 한 바이트를 썼다 */
+    g_in_len = 0;                                        /* the lone ESC byte is used up */
     g_esc_since = 0;
     return 1;
 }
@@ -37,22 +37,22 @@ static void key_event(int vk, int down)
     }
 }
 
-/* 키를 뗀 순간을 모르는 터미널용: 키 반복으로 누르고 있음을 흉내 */
+/* for terminals that never report releases: fake "held" from key repeat */
 static void key_tap(int vk)
 {
     int was = g_ktap[vk] > g_now, walk = vk == 'W' || vk == 'A' || vk == 'S' || vk == 'D';
-    if (!was || !walk) g_h.press(vk);                   /* 걷기만 '누르고 있음', 나머지는 누를 때마다 실행 */
+    if (!was || !walk) g_h.press(vk);                   /* only walking keys are "held"; others act on every press */
     g_ktap[vk] = g_now + (was ? 90 : 200);
 }
 
 static void text(int c) { if (g_h.text && c >= 32 && c != 127) g_h.text(c); }
 
-/* 일반 터미널의 UTF-8 글자(한글 등)를 모아 유니코드 문자 하나로 알린다 */
+/* collect UTF-8 bytes (Hangul etc.) from a plain terminal into one Unicode character */
 static void utf8_byte(int c)
 {
     static int cp, need;
     if (c < 0x80) { need = 0; return; }
-    if ((c & 0xC0) == 0x80) {                           /* 이어지는 바이트 */
+    if ((c & 0xC0) == 0x80) {                           /* continuation byte */
         if (!need) return;
         cp = cp << 6 | (c & 0x3F);
         if (--need == 0) text(cp);
@@ -68,7 +68,7 @@ static void plain_char(int c)
 {
     if (c >= 0x80) { utf8_byte(c); return; }
     utf8_byte(c);
-    text(c);                                            /* 글자 입력란이 쓰는 글자 */
+    text(c);                                            /* the character for text fields */
     if (c == 3) g_h.quit();
     else if (c == '\r' || c == '\n') key_tap(VK_ENTER);
     else if (c == 127 || c == 8) key_tap(VK_BACK);
@@ -99,16 +99,16 @@ static void csi(const unsigned char *p, int n, char fin)
     if (fin == '_') {                                    /* win32-input-mode: Vk;Sc;Uc;Kd;Cs;Rc */
         g_win32 = 1;
         if (prm[0] == 'C' && prm[3] && (prm[4] & 0x0C)) g_h.quit();
-        if (prm[3] && prm[2] >= 32) text(prm[2]);   /* 유니코드 글자 (키 반복도 글자로) */
+        if (prm[3] && prm[2] >= 32) text(prm[2]);   /* a Unicode character (key repeat counts as text too) */
         if (prm[0] > 0) key_event(prm[0], prm[3]);
-    } else if (priv && fin == 'M') {                     /* 마우스: 왼쪽 클릭 = 들기/놓기, 휠 = 돌리기 */
+    } else if (priv && fin == 'M') {                     /* mouse: left click = take/place, wheel = rotate */
         if (prm[0] == 0) g_h.click();
         else if (prm[0] == 64) g_h.wheel(-1);
         else if (prm[0] == 65) g_h.wheel(1);
     } else if (fin >= 'A' && fin <= 'D' && !priv) {
         static const int vk[4] = { VK_UP, VK_DOWN, VK_RIGHT, VK_LEFT };
         key_tap(vk[fin - 'A']);
-    } else if (fin == 'O' && n == 0) {                   /* 창이 초점을 잃음: 누른 키를 모두 뗀 것으로 */
+    } else if (fin == 'O' && n == 0) {                   /* the window lost focus: treat every key as released */
         memset(g_kdown, 0, sizeof g_kdown);
     }
 }

@@ -1,25 +1,25 @@
 /*
- * 공용 상수: 방 크기, 버퍼 크기, 스레드 수, 플레이어 몸 크기.
- * 배열 크기와 인덱스 규칙은 원본(prism.c)과 같다.
+ * Shared constants: room size, buffer sizes, thread count, player body size.
+ * Array sizes and index rules are the same as in the original prototype (prism.c).
  */
 #ifndef PRISM_COMMON_CONFIG_H
 #define PRISM_COMMON_CONFIG_H
 
-#define RW 16                 /* 방 크기 (칸) */
+#define RW 16                 /* room size (cells) */
 #define RD 12
 #define RH 4
-#define BY 1.55f              /* 빛줄기 높이 */
+#define BY 1.55f              /* height of the light beams */
 #define MAXOBJ 32
 #define MAXSEG 512
-#define MAX_W 320             /* 터미널 칸 수 상한 */
+#define MAX_W 320             /* upper limit of terminal cells */
 #define MAX_H 100
-#define PIX_W 720             /* 픽셀 버퍼 크기: 터미널(MAX_W × MAX_H*2)과 스크린샷(720×420)을 모두 담는다 */
+#define PIX_W 720             /* pixel buffer: holds both the terminal (MAX_W x MAX_H*2) and screenshots (720x420) */
 #define PIX_H 420
 #define MAX_THREADS 8
 #define PI 3.14159265f
 
-/* 플레이어 */
-#define PR     0.22f          /* 몸 반지름 */
-#define EYE_Y  2.35f          /* 눈 높이 (바닥 윗면이 1) */
+/* player */
+#define PR     0.22f          /* body radius */
+#define EYE_Y  2.35f          /* eye height (the top of the floor is 1) */
 
 #endif

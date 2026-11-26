@@ -1,16 +1,16 @@
 /*
- * 레벨 에디터: 내려다보기 화면에서 커서로 칸을 골라 블록과 물체를 놓고, 지우고, 돌린다.
- * 바꿀 때마다 빛을 다시 계산해 바로 보여 준다.
+ * Level editor: in the top-down view, pick a cell with the cursor and place, erase and turn blocks and objects.
+ * Light is recomputed after every change and shown at once.
  *
- *   방향키      커서 (화면 기준 위아래·좌우)      Tab / ]  다음 도구,  [  이전 도구
- *   Enter / F   놓기          Backspace / X  지우기 (바닥으로)
- *   Q / E       돌리기 (거울 22.5도, 광원 45도)
- *   , / .       카메라 돌리기      + / -  확대·축소
- *   N           이름 바꾸기 (한글 입력 가능)     V  풀이 확인     T  시험 플레이
- *   S           저장 (levels 폴더, 임시 파일 → fsync → rename)
- *   ESC         나가기 (저장하지 않았으면 한 번 더)
+ *   arrows      cursor (screen up/down/left/right)    Tab / ]  next tool,  [  previous tool
+ *   Enter / F   place          Backspace / X  erase (to floor)
+ *   Q / E       turn (mirrors 22.5 degrees, emitters 45)
+ *   , / .       turn the camera      + / -  zoom
+ *   N           rename (Hangul input works)     V  verify (solve)     T  test play
+ *   S           save (levels folder: temp file -> fsync -> rename)
+ *   ESC         leave (press twice if not saved)
  *
- * 편집 중인 방은 g_levels[0]에 두고 load_level로 월드를 만든다. 메뉴로 돌아가면 main이 방 파일을 다시 읽는다.
+ * The room being edited lives in g_levels[0] and load_level builds the world from it. Back in the menu, main reloads the level files.
  */
 #ifndef PRISM_GAME_EDITOR_H
 #define PRISM_GAME_EDITOR_H
@@ -19,12 +19,12 @@
 
 enum { EDIT_NONE, EDIT_QUIT, EDIT_TEST };
 
-void editor_open(const Level *src);     /* src를 고친다. NULL이면 새 방 */
-void editor_resume(void);               /* 시험 플레이에서 돌아왔을 때 */
-const Level *editor_level(void);        /* 편집 중인 방 (시험 플레이용) */
+void editor_open(const Level *src);     /* edit src; NULL = a new room */
+void editor_resume(void);               /* back from test play */
+const Level *editor_level(void);        /* the room being edited (for test play) */
 
 int editor_key(int vk);                 /* EDIT_* */
-void editor_text(int ch);               /* [, ], 쉼표, 마침표, 이름 입력 */
+void editor_text(int ch);               /* [, ], comma, period, name input */
 void editor_draw(int frame);
 
 #endif

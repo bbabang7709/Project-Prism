@@ -1,12 +1,12 @@
 /*
- * 렌더러: 카메라에서 본 방을 픽셀 버퍼(g_pix)로 그린다.
+ * Renderer: draws the room as seen from the camera into the pixel buffer (g_pix).
  *
- * 게임 상태는 직접 읽지 않고, 호출하는 쪽이 채운 View를 받는다.
- * 빛줄기도 광학 모듈이 아니라 View의 선분 배열(Seg)로 받는다.
- * 월드(블록, 물체)는 읽기만 한다.
+ * It never reads game state; it takes a View filled in by the caller.
+ * Beams also come in the View, as Seg segments, not from the optics module.
+ * The world (blocks, objects) is read only.
  *
- * 스레드: renderer_init이 작업 스레드를 만들고, renderer_draw가 바리어로 한 프레임을 나눠 그린다.
- * renderer_draw가 돌아올 때까지 다른 스레드에서 월드나 선분을 바꾸면 안 된다.
+ * Threads: renderer_init creates the workers, renderer_draw splits one frame between them with barriers.
+ * No other thread may change the world or the segments until renderer_draw returns.
  */
 #ifndef PRISM_RENDERER_H
 #define PRISM_RENDERER_H
@@ -16,20 +16,20 @@
 #include "common/types.h"
 
 typedef struct {
-    int fp;                           /* 1: 1인칭 (플레이어 눈), 0: 내려다보기 */
-    float px, pz, pyaw, ppitch;       /* 플레이어 위치와 시선 */
-    float cam_yaw, cam_pitch, cam_dist;   /* 내려다보기 카메라 */
-    int tx, tz;                       /* 물체를 놓을 수 있다고 표시할 바닥 칸 (-1이면 없음) */
-    int sel_obj;                      /* 노란 테두리를 그릴 물체 번호 (-1이면 없음) */
-    const Seg *seg;                   /* 빛줄기 선분 */
+    int fp;                           /* 1: first person (player's eye), 0: top-down */
+    float px, pz, pyaw, ppitch;       /* player position and view direction */
+    float cam_yaw, cam_pitch, cam_dist;   /* top-down camera */
+    int tx, tz;                       /* floor cell marked as a place to put an object (-1 = none) */
+    int sel_obj;                      /* object to outline in yellow (-1 = none) */
+    const Seg *seg;                   /* beam segments */
     int nseg;
-    const Body *bodies;               /* 그릴 플레이어 몸들 (1인칭이면 자기 몸은 빼고 넘긴다) */
+    const Body *bodies;               /* player bodies to draw (in first person, without your own) */
     int nbody;
-    float paspect;                    /* 픽셀 하나의 세로/가로 비 (0이면 1: 정사각형). 터미널 사분 블록은 2 */
+    float paspect;                    /* pixel height/width ratio (0 means 1: square). Terminal quadrant blocks: 2 */
     float py;                         /* first person: jump height added to the eye height */
 } View;
 
-/* 그린 결과. 위에서부터 H줄, 왼쪽부터 W칸을 쓴다 (0xRRGGBB) */
+/* the result: H rows from the top, W columns from the left (0xRRGGBB) */
 extern uint32_t g_pix[PIX_H][PIX_W];
 
 /* timings of the last renderer_draw, for the performance overlay */
@@ -41,16 +41,16 @@ typedef struct {
 } RenderStats;
 const RenderStats *renderer_stats(void);
 
-int renderer_init(void);              /* 작업 스레드를 만들고 쓰는 스레드 수를 돌려준다 */
-void renderer_shutdown(void);         /* 작업 스레드를 끝내고 기다린다 */
+int renderer_init(void);              /* creates the worker threads; returns how many threads render */
+void renderer_shutdown(void);         /* stops the worker threads and waits for them */
 
-/* W×H 픽셀로 한 프레임을 그린다. frame은 수정 깜빡임, 선택 테두리 맥박에 쓴다 */
+/* draw one W x H frame. frame drives crystal flicker and the selection pulse */
 void renderer_draw(const View *v, int W, int H, int frame);
 
-/* g_pix의 W×H 영역을 scale배 키워 PPM(P6)으로 저장한다 */
+/* save the W x H area of g_pix, scaled up scale times, as PPM (P6) */
 void renderer_write_ppm(const char *path, int W, int H, int scale);
 
-/* 같은 영역을 PNG로 저장한다 (압축하지 않는 deflate 블록, 외부 라이브러리 없음). 실패하면 -1 */
+/* save the same area as PNG (stored deflate blocks, no external library). -1 on failure */
 int renderer_write_png(const char *path, int W, int H, int scale);
 
 #endif

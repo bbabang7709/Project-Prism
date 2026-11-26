@@ -9,7 +9,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-/* ---------- 터미널 출력 (바뀐 칸만, 넓은 글자 처리) ---------- */
+/* ---------- terminal output (changed cells only, wide characters) ---------- */
 
 VCell g_back[MAX_H][MAX_W];
 static VCell g_front[MAX_H][MAX_W];
@@ -103,7 +103,11 @@ static int u8dec(const char *s, uint32_t *cp)
     return 1;
 }
 
-static int cp_wide(uint32_t cp) { return (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xFF00 && cp <= 0xFF60); }
+static int cp_wide(uint32_t cp)          /* double-width: Hangul Jamo, CJK, Hangul syllables, full-width forms */
+{
+    return (cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+           (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xFF00 && cp <= 0xFF60);
+}
 
 int term_text(int x, int y, uint32_t fg, uint32_t bg, const char *fmt, ...)
 {
@@ -143,7 +147,7 @@ int term_str_w(const char *s)
     return w;
 }
 
-/* ---------- 터미널 준비 ---------- */
+/* ---------- terminal setup ---------- */
 
 void term_restore(void)
 {

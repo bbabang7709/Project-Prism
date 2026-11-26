@@ -21,32 +21,32 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 8                         /* 2: STATE에 플레이 시간과 전체 조작 수, 3: 감지기·순간이동 고리·상자, 4: 되돌리기, 5: 힌트, 6: 나뉜 방 (연결 번호, 2번 시작 위치), 7: INPUT에 마우스 시선 (참가자가 정한 시선을 호스트가 따른다), 8: jump height of each player in STATE */
+#define VERSION 8                         /* 2 play time, 3 sensors/portals/boxes, 4 undo, 5 hint, 6 split rooms, 7 mouse look, 8 jump height */
 #define MAXMSG 2048
 
 typedef struct {
     int fd;
-    unsigned char in[8192];               /* 아직 처리하지 않은 받은 바이트 */
+    unsigned char in[8192];               /* received bytes not handled yet */
     int len;
-    int ready;                            /* HELLO/WELCOME을 주고받았다 */
-    int64_t since;                        /* 접속한 시각 (ms) */
+    int ready;                            /* HELLO/WELCOME exchanged */
+    int64_t since;                        /* time of connecting (ms) */
 } Conn;
 
-#define HELLO_WAIT_MS 5000                /* 호스트: 접속하고 이 시간 안에 HELLO가 없으면 끊는다 (자리 막기 방지) */
+#define HELLO_WAIT_MS 5000                /* host: drop a connection that sends no HELLO within this time (no slot squatting) */
 
 static int s_mode = NET_OFF;
 static int s_listen = -1, s_port;
 static Conn s_peer = { .fd = -1 };
-static int s_sent_level = -1;             /* 호스트: 마지막으로 보낸 방 */
-static int s_last_seq = -1;               /* 참가자: 마지막으로 받은 알림 번호 */
-static int s_got_level, s_got_state;      /* 참가자: 처음 상태를 다 받았는가 */
-static char s_addr[96];                   /* 보여 줄 주소 */
+static int s_sent_level = -1;             /* host: room sent last */
+static int s_last_seq = -1;               /* joiner: number of the last message received */
+static int s_got_level, s_got_state;      /* joiner: first full state received */
+static char s_addr[96];                   /* address to show */
 static char s_status[160], s_lost[160];
 
 int net_mode(void) { return s_mode; }
 const char *net_lost(void) { return s_lost[0] ? s_lost : NULL; }
 
-/* ---------- 메시지 만들기와 읽기 ---------- */
+/* ---------- building and reading messages ---------- */
 
 typedef struct { unsigned char b[MAXMSG]; int n; } Buf;
 typedef struct { const unsigned char *p; int n, i, bad; } Rd;
@@ -62,7 +62,7 @@ static unsigned get16(Rd *r) { unsigned h = get8(r); return h << 8 | get8(r); }
 static uint32_t get32(Rd *r) { uint32_t h = get16(r); return h << 16 | get16(r); }
 static float getf(Rd *r) { uint32_t u = get32(r); float f; memcpy(&f, &u, 4); return f; }
 
-/* NaN·무한대가 아닌가. -ffast-math는 isfinite()를 항상 참으로 지워 버릴 수 있어서 지수 비트를 직접 본다 */
+/* not NaN or infinity. -ffast-math may fold isfinite() to always true, so check the exponent bits */
 static int finite_f(float f)
 {
     uint32_t u;
@@ -71,7 +71,7 @@ static int finite_f(float f)
 }
 static void getbytes(Rd *r, void *p, int n) { for (int i = 0; i < n; i++) ((unsigned char *)p)[i] = (unsigned char)get8(r); }
 
-/* 한 메시지를 다 보낸다. 보내기 버퍼가 차 있으면 잠깐(최대 200ms) 기다린다 */
+/* send a whole message; if the send buffer is full, wait a little (up to 200 ms) */
 static int send_msg(int fd, int type, const Buf *w)
 {
     unsigned char out[3 + MAXMSG];
@@ -110,7 +110,7 @@ static int set_nonblock(int fd)
     return 0;
 }
 
-/* ---------- 호스트 → 참가자 ---------- */
+/* ---------- host -> joiner ---------- */
 
 static int send_level(int fd)
 {
@@ -168,10 +168,10 @@ static int send_state(int fd, int to)
     return send_msg(fd, M_STATE, &w);
 }
 
-/* ---------- 참가자가 받은 것 적용 ---------- */
+/* ---------- joiner: applying what arrived ---------- */
 
-/* 받은 방은 임시로 읽어 검사한 뒤에만 쓴다. 호스트가 고장 났거나 악의적이어도
- * (물체가 너무 많은 지도, 모르는 글자, 범위 밖 시작 칸) 참가자의 메모리를 망가뜨리지 않게 한다 */
+/* A received room is parsed into a temporary and used only if it checks out, so a broken or hostile host
+ * (too many objects, unknown characters, start cell out of range) cannot corrupt the joiner's memory */
 static void apply_level(Rd *r)
 {
     int idx = (int)get8(r), n = (int)get8(r);
@@ -212,13 +212,13 @@ static void apply_state(Rd *r)
     g_moves = (int)get16(r);
     g_ticks = (int)get32(r);
     g_total_moves = (int)get16(r);
-    (void)solved;                                       /* 빛은 아래에서 직접 다시 계산한다 */
+    (void)solved;                                       /* light is recomputed below */
     for (int i = 0; i < MAXPLAYER; i++) {
         Player *p = &g_pl[i];
         p->on = (int)get8(r);
         float yw, pt;
         p->x = getf(r); p->z = getf(r); yw = getf(r); pt = getf(r); p->y = getf(r);
-        if (!(i == g_me && g_look_local)) { p->yaw = yw; p->pitch = pt; }   /* 내 시선을 마우스로 정하고 있으면 호스트가 돌려준 값은 쓰지 않는다 */
+        if (!(i == g_me && g_look_local)) { p->yaw = yw; p->pitch = pt; }   /* while my mouse sets my view, ignore the view the host sends back */
         p->carry = (signed char)get8(r);
         p->tobj = (signed char)get8(r);
         p->tx = (signed char)get8(r);
@@ -227,7 +227,7 @@ static void apply_state(Rd *r)
         p->hint_obj = (signed char)get8(r);
         p->hint_x = (signed char)get8(r);
         p->hint_z = (signed char)get8(r);
-        /* 받은 값의 범위를 확인한다: 물체 번호는 화면 표시에서 배열 번호로 쓰고, 좌표는 칸 번호로 바뀐다 */
+        /* range-check what arrived: object numbers index arrays on screen and coordinates become cell numbers */
         if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(yw) || !finite_f(pt) || !finite_f(p->y) || p->y < 0 || p->y > JUMP_MAX ||
             p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
             p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
@@ -248,16 +248,16 @@ static void apply_state(Rd *r)
         if (!o->held) g_objat[o->z][o->x] = i + 1;
     }
     Player *me = &g_pl[g_me];
-    if (seq != s_last_seq) {                            /* 새 알림 */
+    if (seq != s_last_seq) {                            /* a new message */
         snprintf(me->msg, sizeof me->msg, "%.159s", msg);
-        me->msg_t = me->hint_t > 90 ? me->hint_t : 90;   /* 힌트 알림은 힌트 표시만큼 오래 */
+        me->msg_t = me->hint_t > 90 ? me->hint_t : 90;   /* a hint message lasts as long as the hint */
         s_last_seq = seq;
     }
-    game_simulate();                                    /* 받은 물체 상태로 빛줄기와 수정을 다시 계산 */
+    game_simulate();                                    /* recompute beams and crystals from the received objects */
     s_got_state = 1;
 }
 
-/* ---------- 받은 메시지 처리 ---------- */
+/* ---------- handling received messages ---------- */
 
 static void drop_peer(const char *why)
 {
@@ -295,7 +295,7 @@ static void dispatch(int type, Rd *r)
         } else if (type == M_INPUT) {
             unsigned keys = get16(r), fp = get8(r);
             float walk = getf(r);
-            unsigned look = get8(r);                          /* 1이면 참가자의 마우스가 정한 시선이 따라온다 */
+            unsigned look = get8(r);                          /* 1: the joiner's mouse-set view follows */
             float lyaw = 0, lpitch = 0;
             if (look) { lyaw = getf(r); lpitch = getf(r); }
             if (r->bad) return;
@@ -305,7 +305,7 @@ static void dispatch(int type, Rd *r)
             }
             g_pl[1].keys = keys;
             g_pl[1].fp = fp != 0;
-            g_pl[1].walk_yaw = finite_f(walk) ? fmodf(walk, 2 * PI) : 0;   /* NaN·무한대면 참가자 위치가 망가진다 */
+            g_pl[1].walk_yaw = finite_f(walk) ? fmodf(walk, 2 * PI) : 0;   /* NaN or infinity would corrupt the joiner's position */
         } else if (type == M_ACTION) {
             int act = (int)get8(r);
             if (!r->bad) game_action(1, act);
@@ -329,8 +329,8 @@ static void dispatch(int type, Rd *r)
     }
 }
 
-/* 읽을 수 있는 만큼 읽고, 다 온 메시지를 처리한다.
- * 상대가 닫았어도 먼저 받아 둔 메시지(예: BYE의 이유)를 처리한 뒤에 끊는다 */
+/* read what is available and handle every complete message.
+ * If the peer closed, handle what arrived first (e.g. the reason in a BYE) before dropping it */
 static void read_peer(void)
 {
     int closed = 0;
@@ -349,7 +349,7 @@ static void read_peer(void)
         if (s_peer.len - i < 3 + plen) break;
         Rd r = { s_peer.in + i + 3, plen, 0, 0 };
         dispatch(type, &r);
-        if (s_peer.fd < 0) return;                      /* 처리 중에 끊었다 */
+        if (s_peer.fd < 0) return;                      /* dropped while handling */
         if (r.bad) { drop_peer("잘못된 메시지를 받았어요"); return; }
         i += 3 + plen;
     }
@@ -358,9 +358,9 @@ static void read_peer(void)
     if (closed) drop_peer(s_mode == NET_HOST ? "" : "호스트와 연결이 끊어졌어요");
 }
 
-/* ---------- 호스트 ---------- */
+/* ---------- host ---------- */
 
-/* 다른 컴퓨터가 접속할 수 있는 IPv4 주소 하나 (없으면 127.0.0.1) */
+/* one IPv4 address other computers can reach (127.0.0.1 if none) */
 static void local_ip(char *out, size_t n)
 {
     snprintf(out, n, "127.0.0.1");
@@ -407,7 +407,7 @@ static void accept_peer(void)
     int fd = accept4(s_listen, NULL, NULL, SOCK_CLOEXEC);
     if (fd < 0) return;
     if (set_nonblock(fd) < 0) { close(fd); return; }
-    if (s_peer.fd >= 0) {                               /* 이미 둘이다 */
+    if (s_peer.fd >= 0) {                               /* already two players */
         send_bye(fd, "이미 2명이 플레이 중이에요");
         close(fd);
         return;
@@ -415,7 +415,7 @@ static void accept_peer(void)
     s_peer = (Conn){ .fd = fd, .since = now_ms() };
 }
 
-/* ---------- 참가자 ---------- */
+/* ---------- joiner ---------- */
 
 int net_join(const char *addr, char *err, size_t errlen)
 {
@@ -435,7 +435,7 @@ int net_join(const char *addr, char *err, size_t errlen)
         if (fd < 0) continue;
         if (set_nonblock(fd) < 0) { close(fd); fd = -1; continue; }
         if (connect(fd, a->ai_addr, a->ai_addrlen) < 0 && errno != EINPROGRESS) { close(fd); fd = -1; continue; }
-        struct pollfd p = { fd, POLLOUT, 0 };             /* 접속을 최대 5초 기다린다 */
+        struct pollfd p = { fd, POLLOUT, 0 };             /* wait up to 5 s for the connection */
         int soerr = 0;
         socklen_t sl = sizeof soerr;
         if (poll(&p, 1, 5000) <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl) < 0 || soerr) {
@@ -453,7 +453,7 @@ int net_join(const char *addr, char *err, size_t errlen)
     put32(&w, MAGIC);
     put16(&w, VERSION);
     if (send_msg(fd, M_HELLO, &w) < 0) { snprintf(err, errlen, "접속이 끊어졌습니다"); return -1; }
-    int64_t until = now_ms() + 5000;                    /* WELCOME, LEVEL, 첫 STATE를 기다린다 */
+    int64_t until = now_ms() + 5000;                    /* wait for WELCOME, LEVEL and the first STATE */
     while (!(s_peer.ready && s_got_level && s_got_state)) {
         int64_t left = until - now_ms();
         struct pollfd p = { s_peer.fd, POLLIN, 0 };
@@ -464,7 +464,7 @@ int net_join(const char *addr, char *err, size_t errlen)
     return 0;
 }
 
-/* ---------- 루프에서 ---------- */
+/* ---------- in the loop ---------- */
 
 int net_pollfds(struct pollfd *pf, int max)
 {
@@ -486,7 +486,7 @@ void net_handle(const struct pollfd *pf, int n)
 void net_after_tick(void)
 {
     if (s_mode == NET_HOST && s_peer.fd >= 0 && !s_peer.ready && now_ms() - s_peer.since > HELLO_WAIT_MS) {
-        send_bye(s_peer.fd, "HELLO가 오지 않았어요");     /* 접속만 하고 말이 없는 연결이 2번 자리를 막지 않게 */
+        send_bye(s_peer.fd, "HELLO가 오지 않았어요");     /* so a silent connection cannot hold slot 2 */
         drop_peer("");
         return;
     }
@@ -539,7 +539,7 @@ void net_close(void)
         s_peer.fd = -1;
     }
     if (s_listen >= 0) { close(s_listen); s_listen = -1; }
-    /* 다음 세션(메뉴에서 다시 시작)을 위해 처음 상태로 */
+    /* back to the start state for the next session (started again from the menu) */
     s_mode = NET_OFF;
     s_peer = (Conn){ .fd = -1 };
     s_sent_level = s_last_seq = -1;

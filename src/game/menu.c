@@ -12,19 +12,19 @@
 
 enum { IT_SOLO, IT_HOST, IT_JOIN, IT_EDIT, IT_HELP, IT_QUIT, NITEM };
 
-static int s_sel;                       /* 고른 항목 */
-static int s_solo[MAXLEVEL], s_nsolo;   /* 혼자 할 수 있는 방 (g_levels 번호) */
-static int s_room_solo, s_room_host;    /* 고른 시작 방: s_solo 안의 번호, g_levels 번호 */
-static int s_room_edit;                 /* 고칠 방: g_levels 번호, s_nall이면 새 방 */
+static int s_sel;                       /* selected item */
+static int s_solo[MAXLEVEL], s_nsolo;   /* rooms playable solo (g_levels indices) */
+static int s_room_solo, s_room_host;    /* chosen start room: index into s_solo, g_levels index */
+static int s_room_edit;                 /* room to edit: g_levels index, s_nall = new room */
 static char s_names[MAXLEVEL][64];
 static int s_coop[MAXLEVEL], s_nall;
-static int s_best[MAXLEVEL];            /* 방마다 가장 적은 조작 횟수 (못 풀었으면 -1) */
-static int s_opened;                    /* 처음 연 메뉴인가 (시작 방을 아직 못 푼 첫 방으로) */
-static char s_addr[64];                 /* 참가할 주소 */
-static int s_editing;                   /* 주소를 입력하는 중 */
-static int s_help;                      /* 조작법 보기 */
+static int s_best[MAXLEVEL];            /* fewest moves per room (-1 if unsolved) */
+static int s_opened;                    /* first time the menu opens (start at the first unsolved room) */
+static char s_addr[64];                 /* address to join */
+static int s_editing;                   /* typing the address */
+static int s_help;                      /* showing the controls */
 static char s_msg[160];
-static float s_yaw = 0.62f;             /* 배경 카메라 */
+static float s_yaw = 0.62f;             /* background camera */
 
 void menu_message(const char *msg) { snprintf(s_msg, sizeof s_msg, "%s", msg ? msg : ""); }
 
@@ -39,7 +39,7 @@ void menu_open(const char *msg)
         s_best[i] = progress_best(g_levels[i].file);
         if (!g_levels[i].coop) s_solo[s_nsolo++] = i;
     }
-    if (!s_opened) {                                      /* 이어 하기: 혼자 하기의 시작 방을 아직 못 푼 첫 방으로 */
+    if (!s_opened) {                                      /* continue: solo starts at the first unsolved room */
         s_opened = 1;
         for (int k = 0; k < s_nsolo; k++)
             if (s_best[s_solo[k]] < 0) { s_room_solo = k; break; }
@@ -54,7 +54,7 @@ void menu_open(const char *msg)
 MenuChoice menu_key(int vk)
 {
     MenuChoice c = { MENU_NONE, 0, NULL };
-    if (s_help) {                                         /* 조작법 화면: 아무 키나 닫는다 */
+    if (s_help) {                                         /* controls page: any key closes it */
         if (vk == VK_ENTER || vk == VK_ESC || vk == VK_BACK) s_help = 0;
         return c;
     }
@@ -94,20 +94,20 @@ MenuChoice menu_key(int vk)
 
 void menu_text(int ch)
 {
-    if (!s_editing || ch == ' ' || ch > 126) return;     /* 주소는 ASCII만 */
+    if (!s_editing || ch == ' ' || ch > 126) return;     /* addresses are ASCII only */
     size_t n = strlen(s_addr);
     if (n + 1 < sizeof s_addr) { s_addr[n] = (char)ch; s_addr[n + 1] = 0; }
 }
 
-/* ---------- 그리기 ---------- */
+/* ---------- drawing ---------- */
 
-/* 가운데 맞춰 글자를 쓴다 */
+/* centred text */
 static void center(int y, uint32_t fg, uint32_t bg, const char *s)
 {
     term_text(g_cols / 2 - term_str_w(s) / 2, y, fg, bg, "%s", s);
 }
 
-/* 칸 버퍼에 상자를 칠한다 */
+/* paint a box into the cell buffer */
 static void box(int x0, int y0, int w, int h, uint32_t bg)
 {
     for (int y = y0; y < y0 + h && y < g_rows; y++)
@@ -147,7 +147,7 @@ void menu_draw(int frame)
         term_present();
         return;
     }
-    /* 배경: 풀린 방을 바깥에서 내려다보며 천천히 돈다 */
+    /* background: the solved room seen from outside, slowly turning */
     int W, H;
     View v;
     game_view(&v);
@@ -160,7 +160,7 @@ void menu_draw(int frame)
     v.cam_pitch = -0.9f;
     v.cam_dist = 18;
     renderer_draw(&v, W, H, frame);
-    hud_blit(120);                                       /* 배경은 어둡게 */
+    hud_blit(120);                                       /* darker background */
 
     int bw = 64 < g_cols - 4 ? 64 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 11;
     if (top < 1) top = 1;
@@ -182,7 +182,7 @@ void menu_draw(int frame)
             char val[96] = "";
             if (i == IT_SOLO && s_nsolo) {
                 int lv = s_solo[s_room_solo];
-                char done[32] = "";                       /* 푼 방: 가장 적은 조작 횟수 */
+                char done[32] = "";                       /* solved room: fewest moves */
                 if (s_best[lv] >= 0) snprintf(done, sizeof done, "  ✓ %d번", s_best[lv]);
                 snprintf(val, sizeof val, "◀ 방 %d  %.30s%s ▶", s_room_solo + 1, s_names[lv], done);
             } else if (i == IT_HOST && s_nall) {
@@ -202,7 +202,7 @@ void menu_draw(int frame)
               : s_help ? "Enter / ESC 닫기"
                        : "↑↓ 고르기   ←→ 시작 방 바꾸기   Enter 시작   ESC 끝내기");
     if (s_msg[0]) center(g_rows - 3, 0xFFE6A0, 0x22252F, s_msg);
-    else if (g_cols < 160)                                /* 화면 해상도는 터미널 칸 수로 정해진다 */
+    else if (g_cols < 160)                                /* screen resolution comes from the terminal's cell count */
         center(g_rows - 3, 0x9FD4FF, 0x161822, " 더 선명하게 보려면 창을 최대화하거나 Ctrl + - 로 글자를 줄이세요 ");
     term_present();
 }

@@ -1,23 +1,23 @@
 /*
- * 진행 기록: 푼 방과 방마다 가장 적은 조작 횟수를 홈 폴더의 파일에 남긴다.
+ * Progress: solved rooms and the fewest moves for each, kept in a file in the home folder.
  *
- * 파일  $HOME/.prism_progress (HOME이 없으면 기록하지 않는다. 환경 변수 PRISM_PROGRESS로 바꿀 수 있다)
- * 형식  한 줄에 "방파일이름 조작횟수" (예: "03-meeting.lvl 7"). 모르는 줄은 건너뛴다
- * 저장  임시 파일에 쓰고 fsync한 뒤 rename으로 바꿔 넣는다 (방 파일 저장과 같은 방식)
+ * File    $HOME/.prism_progress (nothing is saved without HOME; PRISM_PROGRESS overrides the path)
+ * Format  one "room-file-name moves" per line (e.g. "03-meeting.lvl 7"); unknown lines are skipped
+ * Saving  write a temp file, fsync, then rename over the old one (same as saving a level)
  *
- * 방은 방 파일 이름으로 구분한다. 기본 방처럼 파일이 없는 방은 기록하지 않는다.
+ * Rooms are keyed by their file name; rooms without a file (the built-in room) are not recorded.
  */
 #ifndef PRISM_GAME_PROGRESS_H
 #define PRISM_GAME_PROGRESS_H
 
-/* 기록 파일을 읽는다 (없으면 빈 기록). 여러 번 불러도 된다 */
+/* read the progress file (empty if missing); safe to call again */
 void progress_load(void);
 
-/* 그 방을 푼 가장 적은 조작 횟수. 아직 못 풀었으면 -1 */
+/* fewest moves that solved the room; -1 if not solved yet */
 int progress_best(const char *file);
 
-/* 방을 풀었다. 처음 풀었거나 조작 횟수가 줄었으면 기록하고 저장한다.
- * 새 기록이면 1, 아니면 0, 저장하지 못했으면 -1 */
+/* a room was solved: record and save it if it is new or took fewer moves.
+ * 1 = new record, 0 = not, -1 = could not save */
 int progress_record(const char *file, int moves);
 
 #endif

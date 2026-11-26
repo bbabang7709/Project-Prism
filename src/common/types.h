@@ -1,10 +1,10 @@
 /*
- * 모듈 사이에서 주고받는 공용 자료.
+ * Data passed between modules.
  *
- * Seg:  빛 시뮬레이션(optics)이 만들고 렌더러가 그리는 빛줄기 선분.
- *       높이는 모두 BY이고, (x0, z0) → (x1, z1) 구간에 색 (r, g, b)를 가진다.
- *       렌더러는 이 구조체만 알면 되고 광학 내부 구현에는 기대지 않는다.
- * Body: 플레이어 몸 (반지름 PR인 원기둥). 빛을 가리고, 렌더러가 그린다. who는 플레이어 번호(색).
+ * Seg:  a light beam segment, made by the light simulation (optics) and drawn by the renderer.
+ *       Every segment is at height BY and runs (x0, z0) -> (x1, z1) with colour (r, g, b).
+ *       The renderer needs only this struct, not the optics internals.
+ * Body: a player body (a cylinder of radius PR). Blocks light; drawn by the renderer. who = player number (colour).
  *       y is the jump height above the floor; only the renderer uses it
  *       (a jumping body still blocks the beam height, so optics ignore it).
  */

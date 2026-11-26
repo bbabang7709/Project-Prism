@@ -10,8 +10,8 @@
 #include "renderer/renderer.h"
 #include "world/world.h"
 
-static int g_help = 1;                  /* 아래쪽 도움말 줄 보이기 */
-static int g_quad = 1;                  /* 1: 한 칸에 2×2 픽셀(사분 블록), 0: 1×2 픽셀(반블록) */
+static int g_help = 1;                  /* show the help line at the bottom */
+static int g_quad = 1;                  /* 1: 2x2 pixels per cell (quadrant blocks), 0: 1x2 pixels (half block) */
 
 void hud_toggle_help(void) { g_help = !g_help; }
 
@@ -100,9 +100,9 @@ static void draw_perf(int fps)
 int hud_quad(void) { return g_quad; }
 void hud_set_quad(int on) { g_quad = on; }
 
-/* ---------- 픽셀 → 터미널 칸 ---------- */
+/* ---------- pixels -> terminal cells ---------- */
 
-/* 사분 블록 문자: 비트 1 왼쪽 위, 2 오른쪽 위, 4 왼쪽 아래, 8 오른쪽 아래가 글자색 */
+/* quadrant block characters: bit 1 top left, 2 top right, 4 bottom left, 8 bottom right are the foreground colour */
 static const char *QUAD[16] = {
     " ", "\xE2\x96\x98", "\xE2\x96\x9D", "\xE2\x96\x80", "\xE2\x96\x96", "\xE2\x96\x8C", "\xE2\x96\x9E", "\xE2\x96\x9B",
     "\xE2\x96\x97", "\xE2\x96\x9A", "\xE2\x96\x90", "\xE2\x96\x9C", "\xE2\x96\x84", "\xE2\x96\x99", "\xE2\x96\x9F", "\xE2\x96\x88",
@@ -125,13 +125,13 @@ static void put_cell(VCell *v, const char *ch, uint32_t fg, uint32_t bg)
     v->wide = 0;
 }
 
-/* 네 픽셀을 두 색으로 가장 잘 나누는 모양을 고른다 (나눈 두 무리의 평균색과의 차이가 가장 작은 것) */
+/* pick the split of four pixels into two colours that fits best (smallest error against each group's mean) */
 static void quad_cell(const uint32_t p[4], VCell *v)
 {
     int best = 15;
     float best_err = 1e30f, fr = 0, fg = 0, fb = 0, br = 0, bgc = 0, bb = 0;
     for (int m = 1; m < 16; m++) {
-        if (m != 15 && (m & 8)) continue;                 /* m과 15-m은 같은 나눔: 오른쪽 아래가 배경인 쪽만 본다 */
+        if (m != 15 && (m & 8)) continue;                 /* m and 15-m are the same split: only look at those with the bottom right in the background */
         float s[2][3] = { { 0 } }, n[2] = { 0 };
         for (int i = 0; i < 4; i++) {
             int gi = (m >> i) & 1;
@@ -144,7 +144,7 @@ static void quad_cell(const uint32_t p[4], VCell *v)
         for (int i = 0; i < 4; i++) {
             int gi = (m >> i) & 1;
             float dr = (float)(p[i] >> 16 & 255) - s[gi][0], dg = (float)(p[i] >> 8 & 255) - s[gi][1], db = (float)(p[i] & 255) - s[gi][2];
-            err += dr * dr * 0.3f + dg * dg * 0.59f + db * db * 0.11f;   /* 사람 눈 밝기 가중치 */
+            err += dr * dr * 0.3f + dg * dg * 0.59f + db * db * 0.11f;   /* perceived brightness weights */
         }
         if (err < best_err - 1e-3f) {
             best_err = err; best = m;
@@ -154,7 +154,7 @@ static void quad_cell(const uint32_t p[4], VCell *v)
     }
     uint32_t fc = (uint32_t)(fr + 0.5f) << 16 | (uint32_t)(fg + 0.5f) << 8 | (uint32_t)(fb + 0.5f);
     uint32_t bc = best == 15 ? fc : (uint32_t)(br + 0.5f) << 16 | (uint32_t)(bgc + 0.5f) << 8 | (uint32_t)(bb + 0.5f);
-    if (best == 15) put_cell(v, QUAD[3], fc, fc);        /* 한 색: ▀에 같은 두 색 (출력할 때 공백으로 줄어든다) */
+    if (best == 15) put_cell(v, QUAD[3], fc, fc);        /* one colour: the same two colours on a half block (printed as a space) */
     else put_cell(v, QUAD[best], fc, bc);
 }
 
@@ -177,7 +177,7 @@ void hud_frame_size(int *W, int *H, float *paspect)
 {
     *W = g_cols * (g_quad ? 2 : 1);
     *H = g_rows * 2;
-    *paspect = g_quad ? 2.0f : 1.0f;                     /* 사분 블록 픽셀은 가로가 반이라 세로로 길다 */
+    *paspect = g_quad ? 2.0f : 1.0f;                     /* quadrant pixels are half as wide, so they are tall */
 }
 
 void hud_draw(int frame, int fps, const char *net)
@@ -198,7 +198,7 @@ void hud_draw(int frame, int fps, const char *net)
     renderer_draw(&view, rw, rh, frame);                  /* fewer pixels when dynamic resolution stepped down */
     autores_update(renderer_stats()->frame_ms);
     if (rw != W || rh != H) upscale(rw, rh, W, H);
-    if (me->fp) {                                           /* 조준점 (가로 픽셀이 좁으면 가로로 더 길게) */
+    if (me->fp) {                                           /* crosshair (wider when pixels are narrow) */
         int cx = W / 2, cy = H / 2, kx = g_quad ? 4 : 2;
         for (int k = -kx; k <= kx; k++) g_pix[cy][cx + k] = k ? 0xE8E8E8 : 0xFFFFFF;
         for (int k = -2; k <= 2; k++) if (k) g_pix[cy + k][cx] = 0xE8E8E8;
@@ -211,10 +211,10 @@ void hud_draw(int frame, int fps, const char *net)
     x += term_text(x, 0, 0xC8CCD8, 0x161822, "%s%s  |  수정 %d/%d", g_levels[g_cur_level].name, g_levels[g_cur_level].coop ? " (2인 협동)" : "", lit, total);
     x += term_text(x, 0, g_solved ? 0x7CE07C : 0xC8CCD8, 0x161822, g_solved ? "  |  문 열림" : "  |  문 닫힘");
     x += term_text(x, 0, 0xC8CCD8, 0x161822, "  |  %s", me->fp ? "1인칭" : "내려다보기");
-    if (net) term_text(1, 1, 0x9FD4FF, 0x101010, " %s ", net);    /* 네트워크 상태 (둘째 줄 왼쪽) */
+    if (net) term_text(1, 1, 0x9FD4FF, 0x101010, " %s ", net);    /* network status (left of the second row) */
     term_text(g_cols - 34, 0, 0x7A8090, 0x161822, "키 %s  빛줄기 %d  %2d fps", input_win32() ? "누름/뗌" : "탭", g_nseg, fps);
 
-    /* 아래쪽: 손에 든 것, 겨누는 것 */
+    /* bottom: what you hold, what you aim at */
     int iy = g_rows - (g_help ? 3 : 2);
     char info[160];
     if (me->carry >= 0)
@@ -235,7 +235,7 @@ void hud_draw(int frame, int fps, const char *net)
     }
     if (g_perf) draw_perf(fps);
     if (me->msg_t > 0) term_text(g_cols / 2 - term_str_w(me->msg) / 2 - 1, 2, g_solved ? 0x101010 : 0xFFFFFF, g_solved ? 0x7CE07C : 0x2A2F3C, " %s ", me->msg);
-    if (g_cleared) {                                      /* 끝 화면: 기록과 안내 */
+    if (g_cleared) {                                      /* end screen: results and what to do next */
         int bw = 46, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - 4;
         for (int y = by; y < by + 7; y++)
             for (int x = bx; x < bx + bw; x++) g_back[y][x] = (VCell){ 0xFFFFFF, 0x1C2A22, " ", 0 };

@@ -1,13 +1,13 @@
 /*
- * 게임: 플레이어(최대 2명)와 카메라, 겨누기, 들기·놓기·돌리기, 처음 상태로, 퍼즐 판정, 방 이동.
+ * Game: players (up to 2) and cameras, aiming, taking/placing/turning, reset, puzzle checks, moving between rooms.
  *
- * 빛은 물체가 바뀌거나 몸이 움직였을 때만 다시 계산한다 (game_simulate).
- * 모든 플레이어의 몸이 빛을 가린다.
- * 들기·놓기·돌리기는 하기 전 상태를 기억해 두어 되돌릴 수 있다 (ACT_UNDO, 방마다 64번까지).
- * 힌트(ACT_HINT)는 처음 상태에서 푼 답과 지금 상태를 비교해 다음에 할 일 하나를 알려 준다.
+ * Light is recomputed only when an object changes or a body moves (game_simulate).
+ * Every player's body blocks light.
+ * Take/place/turn remember the state before them so they can be undone (ACT_UNDO, up to 64 per room).
+ * A hint (ACT_HINT) compares the current state with a solution from the starting state and names one next step.
  *
- * 혼자 할 때와 호스트는 이 모듈이 모든 플레이어를 움직인다(game_tick).
- * 참가자(클라이언트)는 호스트가 보낸 상태를 받아 그리기만 하고, 키와 동작은 호스트로 보낸다.
+ * Solo and host: this module moves every player (game_tick).
+ * Joiner (client): only draws the state the host sends, and sends its keys and actions to the host.
  */
 #ifndef PRISM_GAME_H
 #define PRISM_GAME_H
@@ -16,10 +16,10 @@
 
 #define MAXPLAYER 2
 
-/* 누르고 있는 키 (Player.keys) */
+/* keys being held (Player.keys) */
 enum { K_W = 1, K_A = 2, K_S = 4, K_D = 8, K_LEFT = 16, K_RIGHT = 32, K_UP = 64, K_DOWN = 128, K_RUN = 256 };
 
-/* 조작 (네트워크로 보내는 단위이기도 하다). ACT_JUMP is not counted as a move */
+/* actions (also the unit sent over the network). ACT_JUMP is not counted as a move */
 enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO, ACT_HINT, ACT_JUMP };
 
 #define WALK_SPEED 3.0f                 /* cells per second */
@@ -29,56 +29,56 @@ enum { ACT_TAKE = 1, ACT_ROT_LEFT, ACT_ROT_RIGHT, ACT_RESET, ACT_UNDO, ACT_HINT,
 #define JUMP_MAX   1.0f                 /* largest height accepted from the network */
 
 typedef struct {
-    int on;                             /* 이 자리에 플레이어가 있다 */
-    float x, z, yaw, pitch;             /* 위치와 시선 */
+    int on;                             /* a player is in this slot */
+    float x, z, yaw, pitch;             /* position and view direction */
     float y, vy;                        /* jump height above the floor and vertical speed */
-    int fp;                             /* 1: 1인칭, 0: 내려다보기 (겨누기 방식이 다르다) */
-    float walk_yaw;                     /* 내려다보기에서 걷는 방향의 기준 (그 사람의 카메라 각도) */
-    unsigned keys;                      /* 누르고 있는 키 K_* */
-    int carry;                          /* 들고 있는 물체 (-1이면 없음) */
-    int tobj, tx, tz;                   /* 겨누는 물체, 놓을 수 있는 칸 (-1이면 없음) */
-    char msg[160];                      /* 이 사람에게 보여 줄 알림 */
-    int msg_t, msg_seq;                 /* 알림이 남은 틱 수, 알림 번호 (새 알림마다 1씩) */
-    int hint_t, hint_obj, hint_x, hint_z;   /* 힌트: 남은 틱 수, 표시할 물체와 칸 (-1이면 없음) */
+    int fp;                             /* 1: first person, 0: top-down (aiming works differently) */
+    float walk_yaw;                     /* top-down: the direction walking is relative to (that player's camera angle) */
+    unsigned keys;                      /* keys held, K_* */
+    int carry;                          /* object being carried (-1 = none) */
+    int tobj, tx, tz;                   /* object aimed at, cell to place on (-1 = none) */
+    char msg[160];                      /* message to show this player */
+    int msg_t, msg_seq;                 /* ticks left for the message, message number (+1 per new message) */
+    int hint_t, hint_obj, hint_x, hint_z;   /* hint: ticks left, object and cell to show (-1 = none) */
 } Player;
 
 extern Player g_pl[MAXPLAYER];
-extern int g_me;                        /* 이 터미널의 플레이어 번호 */
+extern int g_me;                        /* this terminal's player number */
 
-/* 이 터미널의 내려다보기 카메라 */
+/* this terminal's top-down camera */
 extern float cam_yaw, cam_yaw_target, cam_pitch, cam_dist;
 
-/* 퍼즐 상태 */
-extern int g_solved;                    /* 모든 수정이 켜졌는가 (문 열림) */
-extern int g_moves;                     /* 지금 방에서 조작한 횟수 */
-extern int g_cleared;                   /* 마지막 방의 문까지 지났다 */
-extern int g_ticks;                     /* 플레이한 틱 수 (1/30초, 끝나면 멈춘다) */
-extern int g_total_moves;               /* 모든 방에서 조작한 횟수 */
-extern int g_record;                    /* 1이면 방을 풀 때 진행 기록(progress)에 남긴다 (혼자 하기, 호스트) */
+/* puzzle state */
+extern int g_solved;                    /* every crystal lit (door open) */
+extern int g_moves;                     /* moves made in this room */
+extern int g_cleared;                   /* went through the last room's door */
+extern int g_ticks;                     /* ticks played (1/30 s; stops at the end) */
+extern int g_total_moves;               /* moves made in every room */
+extern int g_record;                    /* 1: record solved rooms in the progress file (solo, host) */
 
-void game_reset(void);                  /* 새 게임: 플레이어, 카메라, 기록을 처음 값으로 */
+void game_reset(void);                  /* new game: players, camera and records back to their starting values */
 
-void game_init(int level);              /* level번 방(0부터)을 만들고 플레이어 0을 시작 칸에 세워 빛을 계산한다 */
-void game_simulate(void);               /* 빛 계산 → 문 갱신 */
+void game_init(int level);              /* build room number level (from 0), put player 0 on the start cell, compute the light */
+void game_simulate(void);               /* light -> doors */
 extern int g_sim_us;                    /* time of the last game_simulate (light + plates + door), microseconds */
-int game_solve(void);                   /* 거울 각도를 모두 시험해 푸는 방법을 찾는다 */
+int game_solve(void);                   /* try every mirror angle to find a solution */
 #define SOLVE_MAX_MIRRORS 8             /* game_solve turns at most this many mirrors (8^8 settings) */
-void game_solve_setup(void);            /* 풀이 확인 전에 방 파일의 stand(누가 서 있음)·move(물체 옮김)를 적용한다 */
-void game_find_target(int p);           /* p번 플레이어가 겨누는 물체와 놓을 칸을 다시 구한다 */
-void game_message(int p, const char *fmt, ...) __attribute__((format(printf, 2, 3)));   /* p < 0이면 모두에게 */
+void game_solve_setup(void);            /* before solving, apply the level's stand (someone standing) and move (objects moved) lines */
+void game_find_target(int p);           /* recompute the object player p aims at and the cell to place on */
+void game_message(int p, const char *fmt, ...) __attribute__((format(printf, 2, 3)));   /* p < 0: everyone */
 
-void game_join(int p);                  /* p번 자리에 플레이어가 들어왔다 (시작 칸 근처에 선다) */
-void game_leave(int p);                 /* p번 플레이어가 나갔다 (든 물체는 그 자리에 내려놓는다) */
+void game_join(int p);                  /* a player joined slot p (stands next to the start cell) */
+void game_leave(int p);                 /* player p left (whatever they carried is put down there) */
 
-void game_action(int p, int act);       /* p번 플레이어의 조작 ACT_* */
-void game_view_key(int vk);             /* 이 터미널의 시점·카메라 키 (Tab, 방향키, +/-) */
-unsigned game_local_keys(void);         /* 이 터미널에서 지금 누르고 있는 키 → K_* (마우스 잠금 도우미의 키 상태 포함) */
-void game_mouse_look(float dx, float dy);   /* 1인칭: 마우스 이동량(rad)으로 시선 돌리기. dx>0 오른쪽, dy>0 아래 */
-extern int g_look_local;                /* 1이면 내 시선은 이 터미널의 마우스가 정한다 (참가자는 호스트가 돌려준 시선을 쓰지 않는다) */
-void game_tick(float dt);               /* 모든 플레이어 걷기, 겨누기, 알림 시간 (혼자 / 호스트) */
-void game_local_tick(void);             /* 이 터미널의 카메라 따라가기와 알림 시간 (참가자) */
+void game_action(int p, int act);       /* player p's action ACT_* */
+void game_view_key(int vk);             /* this terminal's view and camera keys (Tab, arrows, +/-) */
+unsigned game_local_keys(void);         /* keys held on this terminal -> K_* (including the mouse-lock helper's key state) */
+void game_mouse_look(float dx, float dy);   /* first person: turn the view by mouse motion (radians). dx > 0 right, dy > 0 down */
+extern int g_look_local;                /* 1: this terminal's mouse sets my view (a joiner then ignores the view the host sends back) */
+void game_tick(float dt);               /* every player walks and aims, messages count down (solo / host) */
+void game_local_tick(void);             /* this terminal's camera follow and message time (joiner) */
 
-void game_view(View *v);                /* 렌더러에 넘길 시점 정보 (이 터미널의 플레이어 기준) */
-void game_print_state(const char *title);   /* --check 출력 */
+void game_view(View *v);                /* view to hand to the renderer (this terminal's player) */
+void game_print_state(const char *title);   /* --check output */
 
 #endif

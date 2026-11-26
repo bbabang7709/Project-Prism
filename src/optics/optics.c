@@ -4,19 +4,19 @@
 #include <string.h>
 #include "world/world.h"
 
-/* ---------- 빛 시뮬레이션 ---------- */
+/* ---------- light simulation ---------- */
 
 Seg g_seg[MAXSEG];
 int g_nseg;
 
-/* 물체에 닿았다고 보는 범위 (렌더러가 그리는 모양과 맞춘 값) */
-#define MIRROR_HALF 0.36f   /* 거울 판의 반 너비 (틀 포함 0.38) */
-#define PRISM_REACH 0.24f   /* 빛이 프리즘 가운데에서 이만큼 안으로 지나야 닿는다 */
-#define OBJ_REACH   0.30f   /* 광원, 수정, 필터, 감지기, 순간이동 고리 */
-#define BOX_HALF    0.30f   /* 상자의 반 너비: 빛은 상자 겉면에서 멈춘다 */
-#define MAX_HOP     8       /* 빛줄기 하나가 순간이동 고리를 지나는 횟수 상한 (두 고리 사이를 맴도는 빛) */
+/* distance at which light counts as touching an object (matched to the shapes the renderer draws) */
+#define MIRROR_HALF 0.36f   /* half width of a mirror panel (0.38 with its frame) */
+#define PRISM_REACH 0.24f   /* light must pass this close to a prism's centre to hit it */
+#define OBJ_REACH   0.30f   /* emitters, crystals, filters, sensors, portals */
+#define BOX_HALF    0.30f   /* half width of a box: light stops at its surface */
+#define MAX_HOP     8       /* how many portals one beam may pass (light bouncing between two portals) */
 
-/* 짝이 되는 다른 순간이동 고리 (없으면 NULL) */
+/* the other portal of the pair (NULL if none) */
 static const Obj *other_portal(const Obj *o)
 {
     for (int i = 0; i < g_nobj; i++)
@@ -24,7 +24,7 @@ static const Obj *other_portal(const Obj *o)
     return NULL;
 }
 
-static Body g_body[8];                 /* 이번 계산에서 빛을 가리는 몸들 */
+static Body g_body[8];                 /* bodies that block light in this pass */
 static int g_nbody;
 
 static int beam_blocked(int x, int z)
@@ -47,13 +47,13 @@ static void rot2(float *dx, float *dz, float a)
     *dz = x * s + z * c;
 }
 
-/* 새 장치가 있는 칸에 빛이 들어왔다. st = { x, z, sx, sz }: 지금 위치와 이 빛줄기 선분의 시작점, cell = 지금 칸.
- * 0: 비켜 감 (계속 진행)  1: 여기서 멈춤  2: 순간이동 (st, cell을 짝 고리 쪽으로 바꿈)
- * 기존 물체를 처리하는 beam()의 계산 순서(-ffast-math에서 결과가 비트 단위로 같아야 함)를 건드리지 않게 따로 둔다 */
+/* light entered a cell holding one of the newer devices. st = { x, z, sx, sz }: current point and the start of this segment, cell = current cell.
+ * 0: misses (keep going)  1: stops here  2: teleported (st and cell moved to the paired portal)
+ * Kept apart from beam() so the order of its float math stays the same (results must be bit-identical under -ffast-math) */
 static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, float dx, float dz, float r, float g, float b, int *hops)
 {
     float x = st[0], z = st[1], ccx = (float)cell[0] + 0.5f, ccz = (float)cell[1] + 0.5f, qx, qz;
-    if (o->kind == O_BOX) {                               /* 상자: 정사각형 겉면에 처음 닿는 점 (슬랩 방식) */
+    if (o->kind == O_BOX) {                               /* box: first point on its square outline (slab method) */
         float lo = 0, hi = 1e30f, p[2] = { x, z }, d[2] = { dx, dz }, c[2] = { ccx, ccz };
         for (int k = 0; k < 2; k++) {
             if (fabsf(d[k]) < 1e-6f) {
@@ -64,11 +64,11 @@ static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, fl
             lo = fmaxf(lo, fminf(t1, t2));
             hi = fminf(hi, fmaxf(t1, t2));
         }
-        if (lo > hi) return 0;                            /* 상자 모서리를 비켜 감 */
+        if (lo > hi) return 0;                            /* misses the box corner */
         add_seg(st[2], st[3], x + dx * lo, z + dz * lo, r, g, b);
         return 1;
     }
-    float tq = fmaxf((ccx - x) * dx + (ccz - z) * dz, 0);   /* 칸 가운데에 가장 가까운 점 */
+    float tq = fmaxf((ccx - x) * dx + (ccz - z) * dz, 0);   /* point closest to the cell centre */
     qx = x + dx * tq; qz = z + dz * tq;
     if ((qx - ccx) * (qx - ccx) + (qz - ccz) * (qz - ccz) > OBJ_REACH * OBJ_REACH) return 0;
     add_seg(st[2], st[3], qx, qz, r, g, b);
@@ -76,7 +76,7 @@ static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, fl
         o->got[0] += r; o->got[1] += g; o->got[2] += b;
         return 1;
     }
-    const Obj *to = other_portal(o);                      /* 순간이동 고리: 짝 고리의 같은 상대 위치에서 같은 방향으로 나온다 */
+    const Obj *to = other_portal(o);                      /* portal: continue from the same relative point of the paired portal, same direction */
     if (!to || ++*hops > MAX_HOP) return 1;
     st[0] = st[2] = (float)to->x + 0.5f + (qx - ccx);
     st[1] = st[3] = (float)to->z + 0.5f + (qz - ccz);
@@ -84,7 +84,7 @@ static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, fl
     return 2;
 }
 
-/* 빛줄기 하나를 칸 단위로 따라간다. 갈라지는 곳에서만 재귀 */
+/* follow one beam cell by cell; recurse only where it splits */
 static void beam(float x, float z, float dx, float dz, float r, float g, float b, int depth)
 {
     if (depth > 28 || r + g + b < 0.05f || g_nseg >= MAXSEG) return;
@@ -95,8 +95,8 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
     for (int it = 0; it < 400; it++) {
         float tx = dx > 1e-6f ? ((float)cx + 1 - x) / dx : dx < -1e-6f ? ((float)cx - x) / dx : 1e30f;
         float tz = dz > 1e-6f ? ((float)cz + 1 - z) / dz : dz < -1e-6f ? ((float)cz - z) / dz : 1e30f;
-        /* 칸 꼭짓점을 정확히 지나면(대각선 빛) 옆 칸을 거치지 않고 대각선 칸으로 바로 간다.
-         * 옆 칸의 물체나 유리를 꼭짓점에서 건드리지 않게 하기 위해서다 */
+        /* a beam passing exactly through a cell corner (a diagonal beam) goes straight to the diagonal cell
+         * instead of through a side cell, so it never clips an object or glass in a side cell at the corner */
         int corner = fabsf(tx - tz) < 1e-4f && tx < 1e29f;
         int axis = corner ? 2 : tx < tz ? 0 : 1;
         float t = axis == 1 ? tz : tx;
@@ -104,7 +104,7 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         int sxs = dx > 0 ? 1 : -1, szs = dz > 0 ? 1 : -1;
         int nx = cx + (axis != 1 ? sxs : 0), nz = cz + (axis != 0 ? szs : 0);
         if (corner) { bx = (float)(dx > 0 ? cx + 1 : cx); bz = (float)(dz > 0 ? cz + 1 : cz); }
-        {                                                 /* 플레이어 몸(반지름 PR인 원)에 가려짐: 가장 가까운 몸에서 끊긴다 */
+        {                                                 /* blocked by a player body (circle of radius PR): cut at the nearest body */
             float hit = -1;
             for (int i = 0; i < g_nbody; i++) {
                 float fx = x - g_body[i].x, fz = z - g_body[i].z, bb = fx * dx + fz * dz, cc = fx * fx + fz * fz - PR * PR, disc = bb * bb - cc;
@@ -116,14 +116,14 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
             if (hit >= 0) { add_seg(sx, sz, x + dx * hit, z + dz * hit, r, g, b); return; }
         }
         if (beam_blocked(nx, nz) || (corner && beam_blocked(cx + sxs, cz) && beam_blocked(cx, cz + szs))) {
-            add_seg(sx, sz, bx, bz, r, g, b);             /* 벽, 또는 두 벽 모서리 사이의 틈 */
+            add_seg(sx, sz, bx, bz, r, g, b);             /* a wall, or the gap between two wall corners */
             return;
         }
 
         float n2 = is_glass(nx, nz) ? 1.5f : 1.0f;
-        if (n2 != nm) {                                   /* 유리 경계: 스넬 법칙, 임계각을 넘으면 전반사 */
+        if (n2 != nm) {                                   /* glass boundary: Snell's law, total internal reflection past the critical angle */
             float ux = axis != 1 ? (dx > 0 ? -1.f : 1.f) : 0, uz = axis != 0 ? (dz > 0 ? -1.f : 1.f) : 0;
-            if (corner) { ux *= 0.70710678f; uz *= 0.70710678f; }   /* 꼭짓점으로 들어가면 대각선 면으로 본다 */
+            if (corner) { ux *= 0.70710678f; uz *= 0.70710678f; }   /* entering through a corner counts as a diagonal face */
             float eta = nm / n2, cosi = -(dx * ux + dz * uz), k = 1 - eta * eta * (1 - cosi * cosi);
             add_seg(sx, sz, bx, bz, r, g, b);
             sx = bx; sz = bz;
@@ -143,31 +143,31 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         int oi = g_objat[cz][cx];
         if (!oi) continue;
         Obj *o = &g_obj[oi - 1];
-        if (o->kind >= O_SENSOR) {                        /* 감지기, 순간이동 고리, 상자 */
+        if (o->kind >= O_SENSOR) {                        /* sensors, portals, boxes */
             float st[4] = { x, z, sx, sz };
             int cell[2] = { cx, cz }, k = new_device(o, st, cell, dx, dz, r, g, b, &hops);
             if (k == 1) return;
             if (k == 2) { x = st[0]; z = st[1]; sx = st[2]; sz = st[3]; cx = cell[0]; cz = cell[1]; nm = 1.0f; }
             continue;
         }
-        /* 물체의 실제 모양에 닿을 때만 반응한다.
-         * 거울·반투명 거울은 거울 면(칸 가운데를 지나는 판)과 만나는 점, 나머지는 칸 가운데에 가장 가까운 점 */
+        /* react only where the light meets the object's real shape:
+         * for mirrors and half mirrors the point on the mirror plane (through the cell centre), otherwise the point closest to the cell centre */
         float ccx = (float)cx + 0.5f, ccz = (float)cz + 0.5f;
         float tq = (ccx - x) * dx + (ccz - z) * dz;
         if (tq < 0) tq = 0;
         float qx = x + dx * tq, qz = z + dz * tq;
-        float miss = sqrtf((qx - ccx) * (qx - ccx) + (qz - ccz) * (qz - ccz));   /* 빛이 가운데에서 비켜 간 거리 */
+        float miss = sqrtf((qx - ccx) * (qx - ccx) + (qz - ccz) * (qz - ccz));   /* how far the light passes from the centre */
         if (o->kind == O_MIRROR || o->kind == O_SPLIT) {
             float a = (float)o->rot * PI / 8, mx = cosf(a), mz = sinf(a), dn = dx * -mz + dz * mx;
-            if (fabsf(dn) < 1e-3f) continue;              /* 거울면과 나란하면 그냥 지나감 */
+            if (fabsf(dn) < 1e-3f) continue;              /* parallel to the mirror: passes by */
             float tm = ((ccx - x) * -mz + (ccz - z) * mx) / dn;
             float px = x + dx * tm, pz = z + dz * tm;
             float ex = dx > 1e-6f ? ((float)cx + 1 - x) / dx : dx < -1e-6f ? ((float)cx - x) / dx : 1e30f;
             float ez = dz > 1e-6f ? ((float)cz + 1 - z) / dz : dz < -1e-6f ? ((float)cz - z) / dz : 1e30f;
-            if (tm < 0 || tm > fminf(ex, ez) || fabsf((px - ccx) * mx + (pz - ccz) * mz) > MIRROR_HALF) continue;   /* 판을 비켜 감 */
+            if (tm < 0 || tm > fminf(ex, ez) || fabsf((px - ccx) * mx + (pz - ccz) * mz) > MIRROR_HALF) continue;   /* misses the panel */
             qx = px; qz = pz;
         } else if (miss > (o->kind == O_PRISM ? PRISM_REACH : OBJ_REACH)) {
-            continue;                                     /* 물체 옆을 스쳐 지나감 */
+            continue;                                     /* grazes past the object */
         }
         switch (o->kind) {
         case O_EMIT:
@@ -189,7 +189,7 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
             float a = (float)o->rot * PI / 8, nnx = -sinf(a), nnz = cosf(a), dn = dx * nnx + dz * nnz;
             add_seg(sx, sz, qx, qz, r, g, b);
             float rdx = dx - 2 * dn * nnx, rdz = dz - 2 * dn * nnz;
-            if (o->kind == O_SPLIT) {                     /* 반은 반사, 반은 통과 */
+            if (o->kind == O_SPLIT) {                     /* half reflected, half passes through */
                 beam(qx, qz, rdx, rdz, r * 0.5f, g * 0.5f, b * 0.5f, depth + 1);
                 r *= 0.5f; g *= 0.5f; b *= 0.5f;
             } else {
@@ -198,7 +198,7 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
             sx = x = qx; sz = z = qz;
             break;
         }
-        case O_PRISM: {                                   /* 분광: 빨강은 왼쪽으로, 파랑은 오른쪽으로 꺾인다 */
+        case O_PRISM: {                                   /* dispersion: red bends left, blue bends right */
             add_seg(sx, sz, qx, qz, r, g, b);
             if (r > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, PI / 4); beam(qx, qz, ex, ez, r, 0, 0, depth + 1); }
             if (b > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, -PI / 4); beam(qx, qz, ex, ez, 0, 0, b, depth + 1); }

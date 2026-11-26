@@ -55,8 +55,8 @@
 
 | 이름 | GitHub | 역할 |
 |---|---|---|
-| <!-- TODO --> | [@bbabang7709](https://github.com/bbabang7709) | <!-- TODO --> |
-| <!-- TODO --> | <!-- TODO --> | <!-- TODO --> |
+| 김동익 | [@bbabang7709](https://github.com/bbabang7709) | <!-- TODO: 역할 --> |
+| 이준우 | [@junu0305](https://github.com/junu0305) | <!-- TODO: 역할 --> |
 
 ## 📅 개발 기간
 
@@ -322,17 +322,17 @@ Project-Prism/
 
 | 모듈 | 코드 줄 수 |
 |---|---:|
-| `game` (게임, HUD, 메뉴, 에디터, 진행 기록, 힌트 안내자) | 1,633 |
-| `renderer` | 864 |
-| `net` | 502 |
-| `platform` (터미널, 입력, 도우미 연결) | 511 |
-| `main.c` | 487 |
-| `world` | 476 |
+| `game` (게임, HUD, 메뉴, 에디터, 진행 기록, 힌트 안내자) | 1,641 |
+| `renderer` | 886 |
+| `platform` (터미널, 입력, 도우미 연결) | 521 |
+| `net` | 510 |
+| `main.c` | 498 |
+| `world` | 478 |
 | `optics` | 237 |
 | `common` | 27 |
-| **합계** | **4,737** |
+| **합계** | **4,798** |
 
-주석과 빈 줄을 뺀 C 코드 줄 수이며, `tests/`(204줄)와 Windows 도우미 `tools/mouselock.c`(432줄)는 포함하지 않았습니다.
+주석과 빈 줄을 뺀 C 코드 줄 수이며, `tests/`(211줄)와 Windows 도우미 `tools/mouselock.c`(432줄)는 포함하지 않았습니다.
 
 ---
 

@@ -10,7 +10,7 @@
 #include "platform/clock.h"
 #include "renderer/raycast.h"
 
-/* ---------- 스레드 ---------- */
+/* ---------- threads ---------- */
 
 static int g_nthreads = 1;
 static pthread_barrier_t g_go, g_mid, g_done;
@@ -18,8 +18,8 @@ static volatile int g_wquit;
 static pthread_t g_tid[MAX_THREADS];
 static RenderStats g_stats;             /* timings of the last frame (each thread writes only its own slot) */
 
-/* 한 프레임: 모든 스레드가 자기 줄을 그린 뒤(g_mid에서 다 같이 기다림),
- * 이웃 줄까지 다 그려진 상태에서 경계 픽셀을 다시 쏘아 매끄럽게 한다 */
+/* One frame: every thread draws its rows (all wait together at g_mid),
+ * then, with the neighbouring rows drawn too, re-shoots edge pixels to smooth them */
 static void render_rows(int id)
 {
     int64_t t0 = now_us();
@@ -87,14 +87,14 @@ void renderer_shutdown(void)
     for (int i = 1; i < g_nthreads; i++) pthread_join(g_tid[i], NULL);
 }
 
-/* ---------- 후처리 ---------- */
+/* ---------- post-processing ---------- */
 
 static inline uint32_t scale_c(uint32_t c, float k)
 {
     return pack((float)(c >> 16 & 255) * k, (float)(c >> 8 & 255) * k, (float)(c & 255) * k);
 }
 
-/* 윤곽선과 선택 테두리 */
+/* outlines and the selection border */
 static void post_pass(int W, int H, int sel_id, int frame)
 {
     float pulse = 0.75f + 0.25f * sinf((float)frame * 0.25f);
@@ -110,13 +110,13 @@ static void post_pass(int W, int H, int sel_id, int frame)
             float z = g_depth[j][i], zl = g_depth[j][i - 1], zr = g_depth[j][i + 1], zu = g_depth[j - 1][i], zd = g_depth[j + 1][i];
             float iz = 1 / z, lap = fabsf(1 / zl + 1 / zr - 2 * iz) + fabsf(1 / zu + 1 / zd - 2 * iz);
             float far = fmaxf(fmaxf(zl, zr), fmaxf(zu, zd));
-            /* 물체와 사람(id 98 이상)은 진한 윤곽선으로 배경과 확실히 떼어 놓고,
-             * 벽과 바닥의 윤곽선은 옅게 해서 물체가 먼저 눈에 들어오게 한다 */
+            /* objects, players and the guide (id 97 and up) get dark outlines to stand apart from the background;
+             * wall and floor outlines stay light so objects catch the eye first */
             int thing = id >= 97;                                 /* 97..99: guide and players, 100+: objects */
             if (lap > iz * 0.15f && far > z * 1.04f) g_pix[j][i] = scale_c(g_pix[j][i], thing ? 0.35f : 0.62f);
             else if (g_id[j][i + 1] != id || g_id[j + 1][i] != id || g_id[j][i - 1] != id || g_id[j - 1][i] != id) {
                 int nthing = g_id[j][i + 1] >= 97 || g_id[j + 1][i] >= 97 || g_id[j][i - 1] >= 97 || g_id[j - 1][i] >= 97;
-                if (thing) g_pix[j][i] = scale_c(g_pix[j][i], 0.45f);     /* 물체 테두리 안쪽 */
+                if (thing) g_pix[j][i] = scale_c(g_pix[j][i], 0.45f);     /* inside an object's edge */
                 else if (!nthing && (g_id[j][i + 1] != id || g_id[j + 1][i] != id)) g_pix[j][i] = scale_c(g_pix[j][i], 0.86f);
             }
         }
@@ -130,7 +130,7 @@ static void post_pass(int W, int H, int sel_id, int frame)
     }
 }
 
-/* ---------- 카메라와 프레임 ---------- */
+/* ---------- camera and frame ---------- */
 
 static void setup_frame(const View *v, int W, int H, int frame)
 {
@@ -144,8 +144,8 @@ static void setup_frame(const View *v, int W, int H, int frame)
         F->ox = v->px; F->oy = EYE_Y + v->py; F->oz = v->pz;
         F->tanh = 1.0f;                                   /* 90 degree horizontal field of view */
     } else {
-        /* 방 가운데를 보되, 카메라 쪽으로 조금 당긴 점을 본다.
-         * 위에서 비스듬히 보면 가까운 쪽 모서리가 화면 아래로 더 길게 늘어나기 때문이다 */
+        /* Look at the room centre, pulled a little toward the camera:
+         * seen obliquely from above, the near edge stretches further down the screen */
         float hl = sqrtf(F->fx * F->fx + F->fz * F->fz) + 1e-6f, pull = 1.2f;
         float tx = RW / 2.0f - F->fx / hl * pull, tz = RD / 2.0f - F->fz / hl * pull;
         F->ox = tx - F->fx * v->cam_dist;
@@ -192,7 +192,7 @@ void renderer_write_ppm(const char *path, int W, int H, int scale)
     fclose(f);
 }
 
-/* ---------- PNG 저장 ---------- */
+/* ---------- PNG output ---------- */
 
 static uint32_t crc_table[256];
 
@@ -213,7 +213,7 @@ static void put_be32(unsigned char *p, uint32_t v)
     p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v;
 }
 
-/* 길이, 종류, 내용, CRC 순서로 청크 하나를 쓴다 */
+/* write one chunk: length, type, data, CRC */
 static void png_chunk(FILE *f, const char *type, const unsigned char *data, uint32_t len)
 {
     unsigned char hdr[8];
@@ -230,9 +230,9 @@ static void png_chunk(FILE *f, const char *type, const unsigned char *data, uint
 int renderer_write_png(const char *path, int W, int H, int scale)
 {
     int w = W * scale, h = H * scale;
-    size_t row = (size_t)w * 3 + 1, raw_len = row * (size_t)h;   /* 줄마다 필터 바이트(0) + RGB */
+    size_t row = (size_t)w * 3 + 1, raw_len = row * (size_t)h;   /* each row: filter byte (0) + RGB */
     size_t nblk = (raw_len + 65534) / 65535;
-    size_t zlen = 2 + raw_len + nblk * 5 + 4;                    /* zlib 머리 + 무압축 블록들 + Adler-32 */
+    size_t zlen = 2 + raw_len + nblk * 5 + 4;                    /* zlib header + stored blocks + Adler-32 */
     unsigned char *raw = malloc(raw_len), *z = malloc(zlen);
     if (!raw || !z) { free(raw); free(z); return -1; }
     for (int y = 0; y < h; y++) {
@@ -248,7 +248,7 @@ int renderer_write_png(const char *path, int W, int H, int scale)
     uint32_t a = 1, b = 0;
     for (size_t i = 0; i < raw_len; i += 65535) {
         size_t n = raw_len - i < 65535 ? raw_len - i : 65535;
-        z[o++] = i + n == raw_len;                               /* 마지막 블록 표시, 무압축(00) */
+        z[o++] = i + n == raw_len;                               /* last-block flag, stored (00) */
         z[o++] = (unsigned char)n; z[o++] = (unsigned char)(n >> 8);
         z[o++] = (unsigned char)~n; z[o++] = (unsigned char)(~n >> 8);
         memcpy(z + o, raw + i, n);
@@ -264,7 +264,7 @@ int renderer_write_png(const char *path, int W, int H, int scale)
     unsigned char ihdr[13];
     put_be32(ihdr, (uint32_t)w);
     put_be32(ihdr + 4, (uint32_t)h);
-    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;   /* 8비트 RGB */
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;   /* 8-bit RGB */
     png_chunk(f, "IHDR", ihdr, 13);
     png_chunk(f, "IDAT", z, (uint32_t)o);
     png_chunk(f, "IEND", NULL, 0);

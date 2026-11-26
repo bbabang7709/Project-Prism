@@ -1,16 +1,16 @@
 /*
- * 기준 커밋과 결과 비교, 방 풀이 확인 (make test)
+ * Compare with a reference commit, check every room (make test)
  *
- * 기준 커밋(make test REF=..., 기본은 마지막 커밋)을 같은 플래그로 빌드한 것과
- * 지금 빌드(./prism)를 같은 인자로 실행해 결과를 비교한다.
- *   - 글자 출력(--check 등): 같아야 한다. 실행 시간(ms)과 출력 폴더 이름은 비교에서 뺀다.
- *   - --shot PPM 이미지: 바이트 단위로 같아야 한다. 다르면 다른 바이트 수와 최대 차이를 알려 준다.
- * 그다음 새 빌드로 방 파일을 하나씩(--level 1, 2, ...) 확인한다.
- *   - 처음에는 문이 닫혀 있어야 하고(풀리지 않은 상태), --solve로 풀 수 있어야 한다.
+ * Runs the reference build (make test REF=..., default: the last commit, same flags)
+ * and the current build (./prism) with the same arguments and compares the results.
+ *   - text output (--check etc.) must match; run times (ms) and output folder names are ignored.
+ *   - --shot PPM images must match byte for byte; otherwise it reports how many bytes differ and by how much.
+ * Then it checks each level file with the new build (--level 1, 2, ...):
+ *   - every room must start with the door closed (unsolved) and be solvable with --solve.
  *
- * 사용: tests/out/baseline <기준 실행 파일>   (프로젝트 루트에서, 새 빌드는 ./prism)
- *       tests/out/baseline -                 기준 비교 없이 방 풀이 확인만 (git 기록이 없는 사본)
- *       기준 실행 파일은 그 파일이 있는 폴더에서 실행한다 (그 커밋의 levels 폴더를 쓰도록)
+ * Usage: tests/out/baseline <reference prism>   (from the project root; the new build is ./prism)
+ *        tests/out/baseline -                   rooms only, no comparison (a copy without git history)
+ *        the reference runs in its own folder, so it uses that commit's levels folder
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -26,9 +26,9 @@
 #define OUT "tests/out"
 #define MAXARG 16
 
-static char g_root[PATH_MAX];            /* 프로젝트 루트 (결과 파일을 절대 경로로 넘긴다) */
+static char g_root[PATH_MAX];            /* project root (result files are passed as absolute paths) */
 
-/* 이름과 인자. 인자 안의 @는 결과 파일 경로(tests/out/<ref|new>/<이름>)로 바뀐다 */
+/* name and arguments; '@' in the arguments becomes the result path (tests/out/<ref|new>/<name>) */
 static const struct { const char *name, *args; } CASES[] = {
     { "check",           "--check" },
     { "check_solve",     "--check --solve" },
@@ -44,9 +44,9 @@ static const struct { const char *name, *args; } CASES[] = {
 };
 #define NCASES ((int)(sizeof CASES / sizeof CASES[0]))
 
-/* ---------- 파일 ---------- */
+/* ---------- files ---------- */
 
-/* 파일 전체를 읽는다. 없으면 NULL */
+/* read a whole file; NULL if missing */
 static char *read_file(const char *path, size_t *len)
 {
     int fd = open(path, O_RDONLY);
@@ -79,15 +79,15 @@ static void make_dir(const char *path)
     if (mkdir(path, 0755) < 0 && errno != EEXIST) { perror(path); exit(2); }
 }
 
-/* ---------- 실행 ---------- */
+/* ---------- running ---------- */
 
-/* bin을 인자 args로 (dir이 있으면 그 폴더에서) 실행하고 표준 출력과 오류를 out 파일에 담는다. 종료 코드를 돌려준다 */
+/* run bin with args (in dir if given), standard output and errors into the file out; returns the exit code */
 static int run(const char *bin, const char *dir, const char *args, const char *side, const char *name, const char *out)
 {
     char buf[512], *argv[MAXARG + 2];
     int argc = 0;
     argv[argc++] = (char *)bin;
-    /* @를 결과 경로로 바꾸고 공백으로 나눈다 */
+    /* replace @ with the result path and split on spaces */
     size_t k = 0;
     for (const char *s = args; *s && k < sizeof buf - 64; s++) {
         if (*s == '@') k += (size_t)snprintf(buf + k, sizeof buf - k, "%s/" OUT "/%s/%s", g_root, side, name);
@@ -116,9 +116,9 @@ static int run(const char *bin, const char *dir, const char *args, const char *s
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 
-/* ---------- 비교 ---------- */
+/* ---------- comparing ---------- */
 
-/* 매번 달라지는 부분을 지운다: ", 1.2 ms with" → ", X ms with", "/ref/"·"/new/" → "/X/" (경로 앞부분은 같다) */
+/* blank out what changes every run: ", 1.2 ms with" -> ", X ms with", "/ref/" and "/new/" -> "/X/" (the rest of the path is the same) */
 static void normalize(char *s)
 {
     char *w = s;
@@ -157,7 +157,7 @@ static int same_text(const char *a_path, const char *b_path)
     return same;
 }
 
-/* 이미지를 바이트 단위로 비교한다. 다르면 다른 바이트 수와 최대 차이를 detail에 적는다 */
+/* compare images byte for byte; on a difference write how many bytes and the largest difference into detail */
 static int same_image(const char *a_path, const char *b_path, char *detail, size_t dlen)
 {
     size_t la, lb;
@@ -201,7 +201,7 @@ static int compare_with(const char *ref)
         for (int s = 0; s < 2; s++) {
             snprintf(txt[s], sizeof txt[s], OUT "/%s/%s.txt", side[s], name);
             snprintf(img[s], sizeof img[s], OUT "/%s/%s.ppm", side[s], name);
-            unlink(img[s]);                               /* 지난번 이미지가 남아 비교되지 않게 */
+            unlink(img[s]);                               /* so last run's image is never compared */
             rc[s] = run(bin[s], s == 0 ? ref_dir : NULL, CASES[i].args, side[s], name, txt[s]);
         }
         int ok = rc[0] == rc[1];
@@ -243,7 +243,7 @@ int main(int argc, char **argv)
         int rc = run(new, NULL, args, "new", name, txt);
         size_t len;
         char *out = read_file(txt, &len);
-        if (rc != 0 && out && strstr(out, "방 번호는")) { free(out); break; }   /* 방이 더 없다 */
+        if (rc != 0 && out && strstr(out, "방 번호는")) { free(out); break; }   /* no more rooms */
         nlv++;
         const char *why = rc != 0 ? "실행 실패" : !out ? "출력 없음"
                         : !strstr(out, "door closed\n") ? "처음부터 문이 열려 있음"

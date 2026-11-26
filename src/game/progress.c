@@ -12,7 +12,7 @@
 static struct { char file[64]; int moves; } s_rec[MAXREC];
 static int s_nrec;
 
-/* 기록 파일 경로. 쓸 곳이 없으면 0 */
+/* path of the progress file; 0 if there is nowhere to write */
 static int path_of(char *out, size_t n)
 {
     const char *p = getenv("PRISM_PROGRESS");
@@ -29,7 +29,7 @@ void progress_load(void)
     s_nrec = 0;
     if (!path_of(path, sizeof path)) return;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return;                                   /* 처음 하는 사람: 빈 기록 */
+    if (fd < 0) return;                                   /* a first-time player: empty progress */
     size_t got = 0;
     while (got < sizeof buf - 1) {
         ssize_t k = read(fd, buf + got, sizeof buf - 1 - got);
@@ -44,7 +44,7 @@ void progress_load(void)
         if (next) *next++ = 0;
         char file[64];
         int moves;
-        if (sscanf(line, "%63s %d", file, &moves) != 2 || moves < 0) continue;   /* 망가진 줄은 버린다 */
+        if (sscanf(line, "%63s %d", file, &moves) != 2 || moves < 0) continue;   /* drop broken lines */
         snprintf(s_rec[s_nrec].file, sizeof s_rec[s_nrec].file, "%s", file);
         s_rec[s_nrec++].moves = moves;
     }

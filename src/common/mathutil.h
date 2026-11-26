@@ -1,4 +1,4 @@
-/* 여러 모듈이 함께 쓰는 작은 수학 함수 */
+/* small math helpers shared by several modules */
 #ifndef PRISM_COMMON_MATHUTIL_H
 #define PRISM_COMMON_MATHUTIL_H
 

@@ -1,4 +1,4 @@
-/* 단조 시계 (밀리초, 마이크로초) */
+/* monotonic clock (milliseconds, microseconds) */
 #ifndef PRISM_PLATFORM_CLOCK_H
 #define PRISM_PLATFORM_CLOCK_H
 

@@ -11,7 +11,7 @@
 #include "platform/terminal.h"
 #include "renderer/renderer.h"
 
-/* 놓을 수 있는 것: 방 파일의 지도 글자와 같다. '@'와 '2'만 지도 글자가 아니라 시작 위치, 2번 플레이어 시작 위치 */
+/* tools: the same characters as level maps; only '@' and '2' are not map characters (start, player 2 start) */
 static const struct { char c; const char *name; } TOOLS[] = {
     { '#', "벽" }, { '|', "기둥" }, { 'g', "유리 블록" }, { 'D', "문" }, { '_', "발판" }, { '=', "창살" },
     { 'E', "광원" }, { 'P', "프리즘" }, { 'M', "거울" }, { 'S', "반투명 거울" }, { 'b', "파랑 필터" }, { 'r', "빨강 필터" },
@@ -22,13 +22,13 @@ static const struct { char c; const char *name; } TOOLS[] = {
 #define NTOOL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
 static const char OBJ_CHARS[] = "EPMSbrRGBYCVOTK";   /* must match world.c */
 
-static Level s_lv;                      /* 편집 중인 방 */
-static char s_file[64];                 /* 저장할 파일 이름 */
-static int s_cx = 1, s_cz = 1;          /* 커서 칸 */
-static int s_tool = 8;                  /* 고른 도구 (처음은 거울) */
-static int s_dirty;                     /* 저장하지 않은 변경이 있다 */
-static int s_quit_armed;                /* ESC를 한 번 눌렀다 (저장 안 하고 나가기 확인) */
-static int s_naming;                    /* 이름 입력 중 */
+static Level s_lv;                      /* room being edited */
+static char s_file[64];                 /* file name to save as */
+static int s_cx = 1, s_cz = 1;          /* cursor cell */
+static int s_tool = 8;                  /* selected tool (mirror at first) */
+static int s_dirty;                     /* there are unsaved changes */
+static int s_quit_armed;                /* ESC pressed once (confirm leaving without saving) */
+static int s_naming;                    /* typing a name */
 static char s_old_name[64];
 static char s_msg[200];
 
@@ -49,7 +49,7 @@ static const char *cell_name(char c)
     return "?";
 }
 
-/* 편집 중인 방으로 월드를 다시 만들고 빛을 계산한다 (사람은 없다고 본다) */
+/* rebuild the world from the room being edited and compute the light (nobody in the room) */
 static void apply(void)
 {
     g_levels[0] = s_lv;
@@ -72,7 +72,7 @@ void editor_open(const Level *src)
     if (src) {
         s_lv = *src;
         snprintf(s_file, sizeof s_file, "%s", src->file);
-    } else {                                              /* 새 방: 벽으로 둘러싸인 빈 방과 오른쪽 문 */
+    } else {                                              /* new room: an empty walled room with a door on the right */
         memset(&s_lv, 0, sizeof s_lv);
         snprintf(s_lv.name, sizeof s_lv.name, "새 방");
         for (int z = 0; z < RD; z++)
@@ -97,9 +97,9 @@ void editor_resume(void)
 
 const Level *editor_level(void) { return &s_lv; }
 
-/* ---------- 편집 ---------- */
+/* ---------- editing ---------- */
 
-/* 화면 위아래·좌우를 지금 카메라 방향에 맞는 칸 이동으로 바꾼다 */
+/* turn screen up/down/left/right into a cell step for the current camera angle */
 static void move_cursor(int up, int right)
 {
     float fx = sinf(cam_yaw), fz = cosf(cam_yaw), rx = cosf(cam_yaw), rz = -sinf(cam_yaw);
@@ -129,7 +129,7 @@ static void place(void)
         changed();
         return;
     }
-    if (c == '2') {                                       /* 같은 칸에 다시 놓으면 없앤다 */
+    if (c == '2') {                                       /* placing it again on the same cell removes it */
         if (s_lv.has_start2 && s_lv.sx2 == s_cx && s_lv.sz2 == s_cz) {
             s_lv.has_start2 = 0;
             msg("2번 시작 위치를 없앴어요 (2번 플레이어는 1번 옆에서 시작)");
@@ -139,7 +139,7 @@ static void place(void)
         } else {
             s_lv.has_start2 = 1; s_lv.sx2 = s_cx; s_lv.sz2 = s_cz;
             if (!s_lv.face2) s_lv.face2 = 'W';
-            s_lv.coop = 1;                                /* 2번 시작 위치가 있으면 2인용 방 */
+            s_lv.coop = 1;                                /* a player-2 start makes it a two-player room */
             msg("2번 시작 위치를 (%d, %d)로 옮겼어요. 2인용 방이 됩니다", s_cx, s_cz);
         }
         changed();
@@ -149,7 +149,7 @@ static void place(void)
     if (s_cx == s_lv.sx && s_cz == s_lv.sz) { msg("시작 위치예요. 시작 위치를 먼저 옮기세요"); return; }
     if (s_lv.has_start2 && s_cx == s_lv.sx2 && s_cz == s_lv.sz2) { msg("2번 시작 위치예요. 먼저 옮기세요"); return; }
     if (*cell == c) return;
-    if (c == 'T') {                                       /* 순간이동 고리는 한 쌍까지 */
+    if (c == 'T') {                                       /* at most one pair of portals */
         int n = 0;
         for (int z = 0; z < RD; z++)
             for (int x = 0; x < RW; x++) n += s_lv.map[z][x] == 'T';
@@ -187,7 +187,7 @@ static void rotate(int d)
     changed();
 }
 
-/* 발판·창살·감지기의 연결 번호를 0→1→2→3→0으로 바꾼다. 같은 번호끼리만 이어진다 */
+/* cycle the link number of a plate, gate or sensor 0 -> 1 -> 2 -> 3 -> 0; only equal numbers are linked */
 static void cycle_link(void)
 {
     char c = s_lv.map[s_cz][s_cx];
@@ -198,7 +198,7 @@ static void cycle_link(void)
     changed();
 }
 
-/* 풀이 확인: 거울 각도를 모두 시험한다. 처음부터 풀려 있으면 알려 준다 */
+/* verify: try every mirror angle; say so if the room starts solved */
 static void verify(void)
 {
     char err[160];
@@ -208,7 +208,7 @@ static void verify(void)
         for (int x = 0; x < RW; x++) k += s_lv.map[z][x] == 'M' || s_lv.map[z][x] == 'S';
     if (k > SOLVE_MAX_MIRRORS) { msg("거울이 %d개라 모든 각도를 시험할 수 없어요 (%d개까지)", k, SOLVE_MAX_MIRRORS); return; }
     apply();
-    game_solve_setup();                                   /* 누군가 서 있거나 물체를 옮겨야 풀리는 방 */
+    game_solve_setup();                                   /* rooms solved only with someone standing or objects moved */
     game_simulate();
     /* the search tries 8^k mirror settings; estimate its time from one measured light calculation
      * so the editor never freezes for long (the game itself is single-threaded here) */
@@ -239,7 +239,7 @@ static void save(void)
     msg("저장했어요: %s/%s", g_level_dir, s_file);
 }
 
-/* 이름 끝의 UTF-8 글자 하나를 지운다 */
+/* delete the last UTF-8 character of the name */
 static void name_backspace(void)
 {
     size_t n = strlen(s_lv.name);
@@ -272,7 +272,7 @@ int editor_key(int vk)
     case 'N':
         s_naming = 1;
         snprintf(s_old_name, sizeof s_old_name, "%s", s_lv.name);
-        s_lv.name[0] = 0;                                 /* 새로 입력 (ESC면 원래 이름으로) */
+        s_lv.name[0] = 0;                                 /* type a new one (ESC restores the old name) */
         msg("새 이름을 입력하고 Enter (한글 가능, ESC 취소)");
         break;
     case 'V': verify(); break;
@@ -296,7 +296,7 @@ int editor_key(int vk)
 
 void editor_text(int ch)
 {
-    if (s_naming) {                                       /* 유니코드 글자를 UTF-8로 붙인다 */
+    if (s_naming) {                                       /* append a Unicode character as UTF-8 */
         char u[5] = { 0 };
         if (ch < 0x80) u[0] = (char)ch;
         else if (ch < 0x800) { u[0] = (char)(0xC0 | ch >> 6); u[1] = (char)(0x80 | (ch & 0x3F)); }
@@ -311,7 +311,7 @@ void editor_text(int ch)
     else if (ch == '.') cam_yaw_target += PI / 4;
 }
 
-/* ---------- 그리기 ---------- */
+/* ---------- drawing ---------- */
 
 void editor_draw(int frame)
 {
@@ -327,10 +327,10 @@ void editor_draw(int frame)
     memset(&v, 0, sizeof v);
     hud_frame_size(&W, &H, &v.paspect);
     v.cam_yaw = cam_yaw; v.cam_pitch = cam_pitch; v.cam_dist = cam_dist;
-    v.tx = s_cx; v.tz = s_cz;                             /* 커서 칸 표시 */
-    v.sel_obj = g_objat[s_cz][s_cx] - 1;                  /* 커서 칸의 물체에는 노란 테두리 */
+    v.tx = s_cx; v.tz = s_cz;                             /* mark the cursor cell */
+    v.sel_obj = g_objat[s_cz][s_cx] - 1;                  /* yellow outline on the object at the cursor */
     v.seg = g_seg; v.nseg = g_nseg;
-    static Body start[2];                                 /* 시작 위치에 사람을 세워 보여 준다 (2번 시작 위치는 2번 색) */
+    static Body start[2];                                 /* show people on the start cells (player 2's start in player 2's colour) */
     start[0] = (Body){ (float)s_lv.sx + 0.5f, (float)s_lv.sz + 0.5f, 0, 0 };
     start[1] = (Body){ (float)s_lv.sx2 + 0.5f, (float)s_lv.sz2 + 0.5f, 1, 0 };
     v.bodies = start; v.nbody = s_lv.has_start2 ? 2 : 1;
@@ -343,7 +343,7 @@ void editor_draw(int frame)
     x += term_text(x, 0, 0xF0E6D8, 0x2A1E12, "%s%s", s_lv.name, s_dirty ? " *" : "");
     x += term_text(x, 0, 0xB8A890, 0x2A1E12, "  |  %s/%s  |  수정 %d/%d %s", g_level_dir, s_file, lit, total, g_solved ? "(풀린 상태)" : "");
 
-    /* 도구 줄: 이전 ◀ [지금] ▶ 다음,  커서 칸 내용 */
+    /* tool bar: previous < [current] > next, and what is in the cursor cell */
     term_bar(1, 0x161822);
     int p = (s_tool + NTOOL - 1) % NTOOL, n = (s_tool + 1) % NTOOL;
     x = term_text(1, 1, 0x9AA0B0, 0x161822, " 도구  %s ◀ ", TOOLS[p].name);
@@ -358,7 +358,7 @@ void editor_draw(int frame)
     if (c == 'M' || c == 'S' || c == 'E') snprintf(info + strlen(info), sizeof info - strlen(info), " · 각도 %d", s_lv.rot[s_cz][s_cx]);
     term_text(g_cols - 1 - term_str_w(info), 1, 0xE8ECF4, 0x161822, "%s", info);
 
-    if (s_naming) {                                       /* 이름 입력 상자 */
+    if (s_naming) {                                       /* name input box */
         int bw = 50, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - 2;
         for (int y = by; y < by + 4; y++)
             for (int xx = bx; xx < bx + bw; xx++) g_back[y][xx] = (VCell){ 0xFFFFFF, 0x1A1E2A, " ", 0 };
