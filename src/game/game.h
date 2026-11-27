@@ -37,9 +37,11 @@ typedef struct {
     unsigned keys;                      /* keys held, K_* */
     int carry;                          /* object being carried (-1 = none) */
     int tobj, tx, tz;                   /* object aimed at, cell to place on (-1 = none) */
-    char msg[160];                      /* message to show this player */
+    char msg[400];                      /* message to show this player ('\n' separates the lines of a card) */
     int msg_t, msg_seq;                 /* ticks left for the message, message number (+1 per new message) */
     int hint_t, hint_obj, hint_x, hint_z;   /* hint: ticks left, object and cell to show (-1 = none) */
+    int tut;                            /* tutorial step 1..TUT_STEPS (0 = not in a tutorial room) */
+    int nrot;                           /* turns made (the tutorial watches it) */
 } Player;
 
 extern Player g_pl[MAXPLAYER];

@@ -7,6 +7,7 @@
 #include "platform/bridge.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
+#include "game/tutorial.h"
 #include "game/ui.h"
 #include "renderer/renderer.h"
 #include "world/world.h"
@@ -277,12 +278,36 @@ void hud_draw(int frame, int fps, const char *net)
     if (g_perf) draw_perf(fps);
 
     /* message card at the top: green when the room is solved, gold for hints */
-    if (me->msg_t > 0) {
-        int mw = term_str_w(me->msg) + 6, mx = g_cols / 2 - mw / 2;
+    if (me->msg_t > 0) {                                  /* '\n' splits a card into lines (room introductions) */
+        char lines[4][200];
+        int nl = 0, mw = 0;
+        for (const char *p = me->msg; *p && nl < 4; nl++) {
+            const char *e = strchr(p, '\n');
+            size_t len = e ? (size_t)(e - p) : strlen(p);
+            snprintf(lines[nl], sizeof lines[nl], "%.*s", (int)(len < sizeof lines[nl] ? len : sizeof lines[nl] - 1), p);
+            if (term_str_w(lines[nl]) > mw) mw = term_str_w(lines[nl]);
+            p = e ? e + 1 : p + len;
+        }
+        mw += 6;
+        int mx = g_cols / 2 - mw / 2;
         uint32_t accent = g_solved ? UI_OK : me->hint_t > 0 ? UI_GOLD : UI_INFO;
-        ui_frame(mx, 2, mw, 3, accent, UI_PANEL, NULL);
-        term_text(mx + 1, 3, accent, UI_PANEL, "▌");
-        term_text(mx + 3, 3, 0xFFFFFF, UI_PANEL, "%s", me->msg);
+        ui_frame(mx, 2, mw, nl + 2, accent, UI_PANEL, NULL);
+        for (int i = 0; i < nl; i++) {
+            term_text(mx + 1, 3 + i, accent, UI_PANEL, "▌");
+            term_text(mx + 3, 3 + i, i == 0 && nl > 1 ? UI_GOLD : 0xFFFFFF, UI_PANEL, "%s", lines[i]);
+        }
+    }
+
+    /* tutorial card (bottom left): the current step and how far along */
+    if (me->tut > 0) {
+        const char *t = tutorial_text(me->tut);
+        int tw = term_str_w(t) + 6, tx = 1, ty = iy - 5;
+        if (tw < 30) tw = 30;
+        ui_frame(tx, ty, tw, 4, UI_GOLD, UI_PANEL, "튜토리얼");
+        term_text(tx + 3, ty + 1, 0xFFFFFF, UI_PANEL, "%s", t);
+        int dx = tx + 3;
+        for (int i = 1; i <= TUT_STEPS; i++) dx += term_text(dx, ty + 2, i < me->tut ? UI_OK : i == me->tut ? UI_GOLD : 0x4A5068, UI_PANEL, "● ");
+        term_text(dx + 1, ty + 2, UI_DIM, UI_PANEL, "%d/%d", me->tut, TUT_STEPS);
     }
 
     /* end screen: a results card */

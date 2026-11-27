@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "net/net.h"
+#include "game/tutorial.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -21,7 +22,7 @@
 
 enum { M_HELLO = 1, M_WELCOME, M_LEVEL, M_STATE, M_INPUT, M_ACTION, M_BYE };
 #define MAGIC 0x5052534Du                 /* 'PRSM' */
-#define VERSION 8                         /* 2 play time, 3 sensors/portals/boxes, 4 undo, 5 hint, 6 split rooms, 7 mouse look, 8 jump height */
+#define VERSION 9                         /* 2 play time, 3 sensors/portals/boxes, 4 undo, 5 hint, 6 split rooms, 7 mouse look, 8 jump height, 9 tutorial step, long messages, lifts */
 #define MAXMSG 2048
 
 typedef struct {
@@ -154,11 +155,12 @@ static int send_state(int fd, int to)
         put8(&w, (unsigned char)(signed char)p->hint_obj);
         put8(&w, (unsigned char)(signed char)p->hint_x);
         put8(&w, (unsigned char)(signed char)p->hint_z);
+        put8(&w, (unsigned)p->tut);
     }
     const Player *p = &g_pl[to];
     int ml = (int)strlen(p->msg);
     put16(&w, (unsigned)p->msg_seq & 0xFFFF);
-    put8(&w, (unsigned)ml);
+    put16(&w, (unsigned)ml);                              /* messages may be several lines (room introductions) */
     putbytes(&w, p->msg, ml);
     put8(&w, (unsigned)g_nobj);
     for (int i = 0; i < g_nobj; i++) {
@@ -227,15 +229,17 @@ static void apply_state(Rd *r)
         p->hint_obj = (signed char)get8(r);
         p->hint_x = (signed char)get8(r);
         p->hint_z = (signed char)get8(r);
+        p->tut = (int)get8(r);
         /* range-check what arrived: object numbers index arrays on screen and coordinates become cell numbers */
         if (!finite_f(p->x) || !finite_f(p->z) || !finite_f(yw) || !finite_f(pt) || !finite_f(p->y) || p->y < 0 || p->y > JUMP_MAX ||
             p->x < 0 || p->z < 0 || p->x > RW || p->z > RD ||
             p->carry < -1 || p->carry >= g_nobj || p->tobj < -1 || p->tobj >= g_nobj ||
             p->tx < -1 || p->tx >= RW || p->tz < -1 || p->tz >= RD ||
-            p->hint_obj < -1 || p->hint_obj >= g_nobj || p->hint_x < -1 || p->hint_x >= RW || p->hint_z < -1 || p->hint_z >= RD) { r->bad = 1; return; }
+            p->hint_obj < -1 || p->hint_obj >= g_nobj || p->hint_x < -1 || p->hint_x >= RW || p->hint_z < -1 || p->hint_z >= RD || p->tut > TUT_STEPS) { r->bad = 1; return; }
     }
-    int seq = (int)get16(r), ml = (int)get8(r);
-    char msg[256];
+    int seq = (int)get16(r), ml = (int)get16(r);
+    char msg[sizeof g_pl[0].msg];
+    if (ml >= (int)sizeof msg) { r->bad = 1; return; }
     getbytes(r, msg, ml);
     msg[ml] = 0;
     int nobj = (int)get8(r);
@@ -249,8 +253,9 @@ static void apply_state(Rd *r)
     }
     Player *me = &g_pl[g_me];
     if (seq != s_last_seq) {                            /* a new message */
-        snprintf(me->msg, sizeof me->msg, "%.159s", msg);
+        snprintf(me->msg, sizeof me->msg, "%s", msg);
         me->msg_t = me->hint_t > 90 ? me->hint_t : 90;   /* a hint message lasts as long as the hint */
+        if (strchr(msg, '\n')) me->msg_t = 30 * 10;     /* a room introduction card: ten seconds */
         s_last_seq = seq;
     }
     game_simulate();                                    /* recompute beams and crystals from the received objects */

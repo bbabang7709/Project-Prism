@@ -25,6 +25,7 @@
 #include "game/editor.h"
 #include "game/menu.h"
 #include "game/progress.h"
+#include "game/tutorial.h"
 #include "net/net.h"
 #include "platform/bridge.h"
 #include "platform/clock.h"
@@ -104,7 +105,8 @@ static void start_solo(int level)
     g_record = 1;                                         /* record solved rooms in the progress file */
     game_init(level < g_nlevels ? level : 0);
     game_find_target(g_me);
-    game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
+    if (!g_room_intro && !g_levels[g_cur_level].tutorial)   /* an introduction card or the tutorial says more */
+        game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
     s_ui = UI_PLAY;
 }
 
@@ -117,7 +119,8 @@ static void start_host(int level)
     game_init(level < g_nlevels ? level : 0);
     if (net_host(s_port, err, sizeof err) < 0) { go_menu(err); return; }
     game_find_target(g_me);
-    game_message(g_me, "다른 터미널에서 ./prism --join 주소 로 참가할 수 있어요");
+    if (!g_room_intro && !g_levels[g_cur_level].tutorial)
+        game_message(g_me, "다른 터미널에서 ./prism --join 주소 로 참가할 수 있어요");
     s_ui = UI_PLAY;
 }
 
@@ -460,11 +463,12 @@ int main(int argc, char **argv)
     if (bridge_start() != 0) fprintf(stderr, "prism: 마우스 도우미 포트 %d를 쓸 수 없어요 (키보드 시선만 사용)\n", BRIDGE_PORT);
     int64_t now = now_ms();
     input_set_time(now);
-    if (net_mode() == NET_HOST)
+    if (net_mode() == NET_HOST && !g_room_intro && !g_levels[g_cur_level].tutorial)
         game_message(g_me, "다른 터미널에서 ./prism --join 주소 로 참가할 수 있어요");
     else if (net_mode() == NET_OFF && level_set) {
         game_find_target(g_me);
-        game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
+        if (!g_room_intro && !g_levels[g_cur_level].tutorial)
+            game_message(g_me, "거울을 들고, 놓고, 돌려서 모든 수정에 맞는 색의 빛을 보내세요");
     } else if (net_mode() == NET_OFF)
         go_menu(NULL);                                    /* no options: the start menu */
     int64_t fps_t0 = now;

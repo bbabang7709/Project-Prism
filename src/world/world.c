@@ -158,6 +158,8 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
             else if (sscanf(arg, "%d %d", px, pz) != 2) rc = fail(err, errlen, path, lineno, "stand는 \"stand x z\" 형식입니다");
             else if (lv->has_stand) lv->has_stand2 = 1;
             else lv->has_stand = 1;
+        } else if (!strcmp(word, "tutorial")) {
+            lv->tutorial = 1;
         } else if (!strcmp(word, "coop")) {
             lv->coop = 1;
             if (!arg[0]) continue;                        /* "coop" alone: a two-player room without a fixed cell */
@@ -322,6 +324,7 @@ int world_save_level(const Level *lv, const char *file, char *err, size_t errlen
     n += (size_t)snprintf(text + n, sizeof text - n, "name %s\nstart %d %d %c\n",
                           lv->name[0] ? lv->name : "이름 없는 방", lv->sx, lv->sz, lv->face ? lv->face : 'E');
     if (lv->has_start2) n += (size_t)snprintf(text + n, sizeof text - n, "start2 %d %d %c\n", lv->sx2, lv->sz2, lv->face2 ? lv->face2 : 'W');
+    if (lv->tutorial) n += (size_t)snprintf(text + n, sizeof text - n, "tutorial\n");
     if (lv->coop && lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "coop %d %d\n", lv->stand_x, lv->stand_z);
     else if (lv->coop) n += (size_t)snprintf(text + n, sizeof text - n, "coop\n");
     else if (lv->has_stand) n += (size_t)snprintf(text + n, sizeof text - n, "stand %d %d\n", lv->stand_x, lv->stand_z);

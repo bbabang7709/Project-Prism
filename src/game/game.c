@@ -8,6 +8,7 @@
 #include "common/config.h"
 #include "common/mathutil.h"
 #include "game/guide.h"
+#include "game/tutorial.h"
 #include "game/progress.h"
 #include "optics/optics.h"
 #include "platform/bridge.h"
@@ -157,6 +158,7 @@ void game_init(int level)
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].on) place_player(i);
     game_simulate();
+    tutorial_room_start();                                /* tutorial steps, or a card about devices new in this room */
 }
 
 void game_solve_setup(void)
@@ -388,6 +390,7 @@ static void rotate(int p, int d)
     if (o->kind != O_MIRROR && o->kind != O_SPLIT) { game_message(p, "%s%s 돌릴 수 없어요", KIND_NAME[o->kind], josa(o->kind, "은", "는")); return; }
     push_undo();
     o->rot = (o->rot + d + 8) % 8;
+    pl->nrot++;
     after_change();
 }
 
@@ -520,6 +523,7 @@ void game_join(int p)
     place_player(p);
     game_simulate();
     game_find_target(p);
+    tutorial_join(p);
     game_message(-1, "%d번 플레이어가 들어왔어요", p + 1);
 }
 
@@ -638,6 +642,7 @@ void game_tick(float dt)
         if (g_pl[i].msg_t > 0) g_pl[i].msg_t--;
     for (int i = 0; i < MAXPLAYER; i++)
         if (g_pl[i].hint_t > 0) g_pl[i].hint_t--;
+    tutorial_tick();
     guide_tick(dt);
     if (!g_cleared) g_ticks++;
 }

@@ -18,6 +18,7 @@
  *                        a gate is open while every plate of its link is pressed and every sensor of it is lit
  *   stand 4 8            for the solver (--solve): assume someone stands on this cell (plate rooms). Twice = two people
  *   move 3 9 13 7        for the solver: move the object at (3, 9) to (13, 7) first (up to 4 lines, box rooms)
+ *   tutorial             a tutorial room: a card walks each player through the basics step by step
  *   map                  the next 12 lines are the 16-column map
  *   map characters: . floor  # wall  | pillar  D door  g glass  E emitter  P prism  M mirror  S half mirror
  *             b blue filter  r red filter  R G B Y C V crystals (red, green, blue, yellow, cyan = green+blue, magenta = red+blue)
@@ -36,7 +37,7 @@
 #include <stdint.h>
 #include "common/config.h"
 
-#define MAXLEVEL 16
+#define MAXLEVEL 32
 
 enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE, B_HATCH };   /* plate (up/pressed), gate, hatch floor */
 enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX, O_LIFT };
@@ -55,6 +56,7 @@ typedef struct {
     int sx, sz;               /* start cell */
     char face;                /* starting facing: 'E' 'S' 'W' 'N' */
     int coop;                 /* two-player room (skipped when solo) */
+    int tutorial;             /* step-by-step tutorial room (tutorial line) */
     int has_stand;            /* for the solver: solved only while someone stands on (stand_x, stand_z) */
     int stand_x, stand_z;
     int nmove;                /* for the solver: solved after moving objects (move x1 z1 x2 z2) */
