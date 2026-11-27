@@ -8,6 +8,7 @@
 #define RW 16                 /* room size (cells) */
 #define RD 12
 #define RH 4
+#define LAYER_DY 1.0f         /* high beams run this much above the low ones (over low walls and objects) */
 #define BY 1.55f              /* height of the light beams */
 #define MAXOBJ 32
 #define MAXSEG 512

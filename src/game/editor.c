@@ -15,12 +15,12 @@
 static const struct { char c; const char *name; } TOOLS[] = {
     { '#', "벽" }, { '|', "기둥" }, { 'g', "유리 블록" }, { 'D', "문" }, { '_', "발판" }, { '=', "창살" },
     { 'E', "광원" }, { 'P', "프리즘" }, { 'M', "거울" }, { 'S', "반투명 거울" }, { 'b', "파랑 필터" }, { 'r', "빨강 필터" },
-    { 'R', "빨강 수정" }, { 'G', "초록 수정" }, { 'B', "파랑 수정" }, { 'Y', "노랑 수정" }, { 'C', "청록 수정" }, { 'V', "자홍 수정" },
-    { 'O', "감지기" }, { 'T', "순간이동 고리" }, { 'K', "상자" }, { 'h', "전달 창구" },
+    { 'R', "빨강 수정" }, { 'G', "초록 수정" }, { 'B', "파랑 수정" }, { 'Y', "노랑 수정" }, { 'C', "청록 수정" }, { 'V', "자홍 수정" }, { 'W', "흰 수정" },
+    { 'O', "감지기" }, { 'T', "순간이동 고리" }, { 'K', "상자" }, { 'h', "전달 창구" }, { 'w', "낮은 벽" }, { 'U', "빛 승강기" },
     { '@', "시작 위치" }, { '2', "2번 시작 위치 (나뉜 2인용 방)" },
 };
 #define NTOOL ((int)(sizeof TOOLS / sizeof TOOLS[0]))
-static const char OBJ_CHARS[] = "EPMSbrRGBYCVOTK";   /* must match world.c */
+static const char OBJ_CHARS[] = "EPMSbrRGBYCVWOTKU";   /* must match world.c */
 
 static Level s_lv;                      /* room being edited */
 static char s_file[64];                 /* file name to save as */

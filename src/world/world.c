@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-const char *KIND_NAME[] = { "", "광원", "거울", "반투명 거울", "프리즘", "필터", "수정", "감지기", "순간이동 고리", "상자" };
+const char *KIND_NAME[] = { "", "광원", "거울", "반투명 거울", "프리즘", "필터", "수정", "감지기", "순간이동 고리", "상자", "빛 승강기" };
 
 const float CHAN_COL[4][3] = { { 0.45f, 1, 0.8f }, { 1, 0.55f, 0.15f }, { 0.95f, 0.35f, 0.85f }, { 0.35f, 0.65f, 1 } };
 
@@ -55,11 +55,11 @@ void world_use_builtin(void)
 
 /* ---------- reading level files ---------- */
 
-static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYCVOTKh";
-static const char OBJ_CHARS[] = "EPMSbrRGBYCVOTK";
+static const char MAP_CHARS[] = ".#|Dg_=EPMSbrRGBYCVWOTKhwU";
+static const char OBJ_CHARS[] = "EPMSbrRGBYCVWOTKU";
 
-/* crystals: R G B Y, plus C (cyan = green + blue) and V (violet/magenta = red + blue) */
-static int is_crystal(char c) { return c && strchr("RGBYCV", c) != NULL; }
+/* crystals: R G B Y, C (cyan = green + blue), V (violet/magenta = red + blue), W (white = all three) */
+static int is_crystal(char c) { return c && strchr("RGBYCVW", c) != NULL; }
 
 static int fail(char *err, size_t errlen, const char *file, int line, const char *fmt, ...)
 {
@@ -217,7 +217,7 @@ static int parse_level(const char *path, Level *lv, char *err, size_t errlen)
     }
     for (int i = 0; i < lv->nmove; i++) {
         const signed char *m = lv->move[i];
-        if (!strchr("PMSbrK", lv->map[m[1]][m[0]]) || !strchr("._", lv->map[m[3]][m[2]]))
+        if (!strchr("PMSbrKU", lv->map[m[1]][m[0]]) || !strchr("._", lv->map[m[3]][m[2]]))
             return fail(err, errlen, path, 0, "move %d %d %d %d: 움직일 수 있는 물체를 빈 바닥이나 발판으로 옮겨야 합니다", m[0], m[1], m[2], m[3]);
     }
     if (!lv->name[0]) {
@@ -331,7 +331,7 @@ int world_save_level(const Level *lv, const char *file, char *err, size_t errlen
             if (lv->chan[z][x] && strchr("_=O", lv->map[z][x])) n += (size_t)snprintf(text + n, sizeof text - n, "link %d %d %d\n", x, z, lv->chan[z][x]);
     for (int i = 0; i < lv->nmove && i < 4; i++) {        /* drop move lines that no longer fit the edited map */
         const signed char *m = lv->move[i];
-        if (strchr("PMSbrK", lv->map[m[1]][m[0]]) && strchr("._", lv->map[m[3]][m[2]]))
+        if (strchr("PMSbrKU", lv->map[m[1]][m[0]]) && strchr("._", lv->map[m[3]][m[2]]))
             n += (size_t)snprintf(text + n, sizeof text - n, "move %d %d %d %d\n", m[0], m[1], m[2], m[3]);
     }
     /* mirrors and half mirrors get a rot line even at angle 0 (like the hand-written files; shows the puzzle's start) */
@@ -420,6 +420,7 @@ void load_level(void)
             case '_': g_blk[0][z][x] = B_PLATE; break;
             case '=': g_blk[1][z][x] = g_blk[2][z][x] = B_GATE; break;
             case 'h': g_blk[0][z][x] = B_HATCH; g_blk[2][z][x] = g_blk[3][z][x] = B_WALL; break;   /* a low opening in a wall */
+            case 'w': g_blk[1][z][x] = B_WALL; break;                                   /* low wall: knee high */
             case 'E': add_obj(O_EMIT, x, z, rot, 0, 1, 1, 1); break;
             case 'P': add_obj(O_PRISM, x, z, rot, 1, 0, 0, 0); break;
             case 'M': add_obj(O_MIRROR, x, z, rot, 1, 0, 0, 0); break;
@@ -432,6 +433,8 @@ void load_level(void)
             case 'Y': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 1, 0); break;
             case 'C': add_obj(O_CRYSTAL, x, z, rot, 0, 0, 1, 1); break;   /* cyan: green + blue */
             case 'V': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 0, 1); break;   /* magenta: red + blue */
+            case 'W': add_obj(O_CRYSTAL, x, z, rot, 0, 1, 1, 1); break;   /* white: all three */
+            case 'U': add_obj(O_LIFT, x, z, rot, 1, 0.75f, 0.95f, 1); break;   /* light lift (movable) */
             case 'O': {                                   /* col: colour shown when lit (differs per link number) */
                 const float *c = CHAN_COL[lv->chan[z][x] & 3];
                 add_obj(O_SENSOR, x, z, rot, 0, c[0], c[1], c[2]);

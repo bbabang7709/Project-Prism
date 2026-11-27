@@ -25,6 +25,9 @@
  *             O sensor (lit by any light)  T portal (0 or 2 per room; light entering one leaves the other in the same direction)
  *             K box (can be carried; stops light and presses plates)
  *             h hatch (people cannot pass, light can, objects put on it can be taken from either side)
+ *             w low wall (knee high: stops people and low beams, high beams pass over)
+ *             U light lift (moves a beam between the low and the high height, same direction)
+ *             W white crystal (needs red, green and blue)
  */
 #ifndef PRISM_WORLD_H
 #define PRISM_WORLD_H
@@ -36,7 +39,7 @@
 #define MAXLEVEL 16
 
 enum { B_AIR, B_FLOOR, B_WALL, B_GLASS, B_DOOR, B_PLATE, B_PLATE_ON, B_GATE, B_HATCH };   /* plate (up/pressed), gate, hatch floor */
-enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX };
+enum { O_EMIT = 1, O_MIRROR, O_SPLIT, O_PRISM, O_FILTER, O_CRYSTAL, O_SENSOR, O_PORTAL, O_BOX, O_LIFT };
 
 typedef struct {
     int kind, x, z, rot, movable, held;

@@ -26,18 +26,19 @@ static const Obj *other_portal(const Obj *o)
 
 static Body g_body[8];                 /* bodies that block light in this pass */
 static int g_nbody;
+static int s_layer;                    /* height of the beam being traced: 0 low, 1 high (changed by light lifts) */
 
 static int beam_blocked(int x, int z)
 {
     if (x < 0 || z < 0 || x >= RW || z >= RD) return 1;
-    int b = g_blk[1][z][x];
+    int b = g_blk[1 + s_layer][z][x];                    /* the voxel row the beam runs through */
     return b == B_WALL || b == B_DOOR || b == B_GATE;
 }
-static int is_glass(int x, int z) { return x >= 0 && z >= 0 && x < RW && z < RD && g_blk[1][z][x] == B_GLASS; }
+static int is_glass(int x, int z) { return x >= 0 && z >= 0 && x < RW && z < RD && g_blk[1 + s_layer][z][x] == B_GLASS; }
 
 static void add_seg(float x0, float z0, float x1, float z1, float r, float g, float b)
 {
-    if (g_nseg < MAXSEG && (fabsf(x1 - x0) + fabsf(z1 - z0)) > 1e-4f) g_seg[g_nseg++] = (Seg){ x0, z0, x1, z1, r, g, b };
+    if (g_nseg < MAXSEG && (fabsf(x1 - x0) + fabsf(z1 - z0)) > 1e-4f) g_seg[g_nseg++] = (Seg){ x0, z0, x1, z1, r, g, b, s_layer };
 }
 
 static void rot2(float *dx, float *dz, float a)
@@ -72,6 +73,13 @@ static __attribute__((noinline)) int new_device(Obj *o, float *st, int *cell, fl
     qx = x + dx * tq; qz = z + dz * tq;
     if ((qx - ccx) * (qx - ccx) + (qz - ccz) * (qz - ccz) > OBJ_REACH * OBJ_REACH) return 0;
     add_seg(st[2], st[3], qx, qz, r, g, b);
+    if (o->kind == O_LIFT) {                              /* light lift: same point and direction, other height */
+        o->got[0] += r; o->got[1] += g; o->got[2] += b;   /* the renderer lights its core with this */
+        if (++*hops > MAX_HOP) return 1;
+        s_layer ^= 1;
+        st[0] = st[2] = qx; st[1] = st[3] = qz;
+        return 2;
+    }
     if (o->kind == O_SENSOR) {
         o->got[0] += r; o->got[1] += g; o->got[2] += b;
         return 1;
@@ -104,7 +112,7 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         int sxs = dx > 0 ? 1 : -1, szs = dz > 0 ? 1 : -1;
         int nx = cx + (axis != 1 ? sxs : 0), nz = cz + (axis != 0 ? szs : 0);
         if (corner) { bx = (float)(dx > 0 ? cx + 1 : cx); bz = (float)(dz > 0 ? cz + 1 : cz); }
-        {                                                 /* blocked by a player body (circle of radius PR): cut at the nearest body */
+        if (!s_layer) {                                   /* blocked by a player body (circle of radius PR): cut at the nearest body; high beams pass over heads */
             float hit = -1;
             for (int i = 0; i < g_nbody; i++) {
                 float fx = x - g_body[i].x, fz = z - g_body[i].z, bb = fx * dx + fz * dz, cc = fx * fx + fz * fz - PR * PR, disc = bb * bb - cc;
@@ -143,7 +151,8 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         int oi = g_objat[cz][cx];
         if (!oi) continue;
         Obj *o = &g_obj[oi - 1];
-        if (o->kind >= O_SENSOR) {                        /* sensors, portals, boxes */
+        if (s_layer && o->kind != O_LIFT) continue;      /* high beams pass over every object but lifts */
+        if (o->kind >= O_SENSOR) {                        /* sensors, portals, boxes, lifts */
             float st[4] = { x, z, sx, sz };
             int cell[2] = { cx, cz }, k = new_device(o, st, cell, dx, dz, r, g, b, &hops);
             if (k == 1) return;
@@ -190,7 +199,9 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
             add_seg(sx, sz, qx, qz, r, g, b);
             float rdx = dx - 2 * dn * nnx, rdz = dz - 2 * dn * nnz;
             if (o->kind == O_SPLIT) {                     /* half reflected, half passes through */
+                int l = s_layer;
                 beam(qx, qz, rdx, rdz, r * 0.5f, g * 0.5f, b * 0.5f, depth + 1);
+                s_layer = l;
                 r *= 0.5f; g *= 0.5f; b *= 0.5f;
             } else {
                 dx = rdx; dz = rdz;
@@ -200,8 +211,9 @@ static void beam(float x, float z, float dx, float dz, float r, float g, float b
         }
         case O_PRISM: {                                   /* dispersion: red bends left, blue bends right */
             add_seg(sx, sz, qx, qz, r, g, b);
-            if (r > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, PI / 4); beam(qx, qz, ex, ez, r, 0, 0, depth + 1); }
-            if (b > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, -PI / 4); beam(qx, qz, ex, ez, 0, 0, b, depth + 1); }
+            int l = s_layer;                              /* split beams start at this height; restore it after each */
+            if (r > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, PI / 4); beam(qx, qz, ex, ez, r, 0, 0, depth + 1); s_layer = l; }
+            if (b > 0.02f) { float ex = dx, ez = dz; rot2(&ex, &ez, -PI / 4); beam(qx, qz, ex, ez, 0, 0, b, depth + 1); s_layer = l; }
             if (g <= 0.02f) return;
             r = b = 0;
             sx = x = qx; sz = z = qz;
@@ -230,6 +242,7 @@ int optics_simulate(const Body *bodies, int nbody)
     for (int i = 0; i < g_nobj; i++)
         if (g_obj[i].kind == O_EMIT) {
             Obj *o = &g_obj[i];
+            s_layer = 0;                                  /* emitters shoot low beams */
             float dx = cosf((float)o->rot * PI / 4), dz = sinf((float)o->rot * PI / 4);
             beam((float)o->x + 0.5f + dx * 0.3f, (float)o->z + 0.5f + dz * 0.3f, dx, dz, o->col[0], o->col[1], o->col[2], 0);
         }

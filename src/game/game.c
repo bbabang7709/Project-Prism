@@ -682,6 +682,6 @@ void game_print_state(const char *title)
             printf("  sensor (%d,%d) got %.2f -> %s\n", o->x, o->z, o->got[0] + o->got[1] + o->got[2], o->lit ? "ON" : "off");
         else if (o->movable)
             printf("  %s (%d,%d) rot %d\n", o->kind == O_MIRROR ? "mirror" : o->kind == O_SPLIT ? "splitter" : o->kind == O_PRISM ? "prism" :
-                   o->kind == O_BOX ? "box" : "filter", o->x, o->z, o->rot);
+                   o->kind == O_BOX ? "box" : o->kind == O_LIFT ? "lift" : "filter", o->x, o->z, o->rot);
     }
 }

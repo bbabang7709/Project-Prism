@@ -11,7 +11,7 @@
 #ifndef PRISM_COMMON_TYPES_H
 #define PRISM_COMMON_TYPES_H
 
-typedef struct { float x0, z0, x1, z1, r, g, b; } Seg;
+typedef struct { float x0, z0, x1, z1, r, g, b; int layer; } Seg;   /* layer 0: low beam at BY, 1: high beam at BY + LAYER_DY */
 typedef struct { float x, z; int who; float y; } Body;
 
 #define BODY_GUIDE 2                    /* Body.who of the hint guide (drawn only, never blocks light) */

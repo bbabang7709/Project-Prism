@@ -20,6 +20,10 @@ static int s_nseg;
 static Body s_body[MAXBODY];
 static int s_nbody;
 static float s_body_oy[MAXBODY];        /* ray origin height used for each body (camera y minus jump height) */
+/* High beams are drawn by moving the ray origin down by LAYER_DY (once per frame), so the per-pixel
+ * ray-to-beam math only ever deals with beams at height BY */
+static float s_seg_oy[MAXSEG];
+static float s_segy[MAXSEG];            /* height of each beam: BY or BY + LAYER_DY */
 static float s_glow[MAXOBJ][6];         /* newer devices that tint their surroundings: x, z, strength, r, g, b */
 static int s_nglow;
 
@@ -27,6 +31,10 @@ void raycast_prepare(const Seg *seg, int nseg, const Body *body, int nbody, floa
 {
     s_nseg = nseg < 0 ? 0 : nseg > MAXSEG ? MAXSEG : nseg;
     memcpy(s_seg, seg, sizeof *seg * (size_t)s_nseg);
+    for (int i = 0; i < s_nseg; i++) {
+        s_seg_oy[i] = s_seg[i].layer ? cam_y - LAYER_DY : cam_y;
+        s_segy[i] = s_seg[i].layer ? BY + LAYER_DY : BY;
+    }
     s_nbody = nbody < 0 ? 0 : nbody > MAXBODY ? MAXBODY : nbody;
     memcpy(s_body, body, sizeof *body * (size_t)s_nbody);
     /* a jumping body is tested by moving the ray origin down by its height, once per frame,
@@ -80,7 +88,7 @@ static inline float sd_box(float x, float y, float z, float hx, float hy, float 
 /* object shapes in coordinates (x, y, z) from the cell centre at floor level; material number in mat.
  * Readable from above: every object sits on a round base (a colour ring by kind on top),
  * and mirror panels are thick with a bright top, so from above a mirror's direction shows as a bright bar */
-enum { M_BASE, M_SILVER, M_FRAME, M_GLASSY, M_PRISM, M_FILTER, M_BODY, M_NOZZLE, M_GEM, M_EYE, M_RING, M_CORE, M_CRATE };
+enum { M_BASE, M_SILVER, M_FRAME, M_GLASSY, M_PRISM, M_FILTER, M_BODY, M_NOZZLE, M_GEM, M_EYE, M_RING, M_CORE, M_CRATE, M_LIFT };
 
 #define BASE_R 0.42f                    /* base radius */
 #define BASE_H 0.10f                    /* base height */
@@ -149,6 +157,16 @@ static float obj_sdf(const Obj *o, float x, float y, float z, int *mat)
         if (e < d) { d = e; *mat = M_FRAME; }
         break;
     }
+    case O_LIFT: {                                        /* light lift: a glass tube spanning both beam heights, a ring at each */
+        float r = sqrtf(x * x + z * z), q = r - 0.19f, y1 = y - (BY - 1), y2 = y - (BY - 1 + LAYER_DY);
+        e = fmaxf(r - 0.14f, fabsf(y - 1.05f) - 0.64f);
+        if (e < d) { d = e; *mat = M_LIFT; }
+        e = fminf(sqrtf(q * q + y1 * y1), sqrtf(q * q + y2 * y2)) - 0.045f;
+        if (e < d) { d = e; *mat = M_FRAME; }
+        e = fmaxf(r - 0.06f, fabsf(y - 0.26f) - 0.16f);   /* post on the base */
+        if (e < d) { d = e; *mat = M_FRAME; }
+        break;
+    }
     case O_BOX:                                           /* box: a wooden crate with copper bands on the edges (same size as BOX_HALF in optics) */
         e = sd_box(x, y - 0.42f, z, 0.30f, 0.32f, 0.30f);
         if (e < d) {
@@ -172,7 +190,7 @@ static void surface_light(float px, float py, float pz, float nx, float ny, floa
         const Seg *s = &s_seg[i];
         float ex = s->x1 - s->x0, ez = s->z1 - s->z0, l2 = ex * ex + ez * ez;
         float t = l2 > 0 ? clampf(((px - s->x0) * ex + (pz - s->z0) * ez) / l2, 0, 1) : 0;
-        float dx = px - (s->x0 + ex * t), dy = py - BY, dz = pz - (s->z0 + ez * t);
+        float dx = px - (s->x0 + ex * t), dy = py - s_segy[i], dz = pz - (s->z0 + ez * t);
         float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 > 2) continue;
         float f = 1 / (1 + d2 / 0.08f);
@@ -461,7 +479,8 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                 float e = c0 + c1 + c2 - fmaxf(c0, fmaxf(c1, c2)) - fminf(c0, fminf(c1, c2));
                 layer(&acc, mixf(120, 190, e), mixf(190, 235, e), mixf(230, 255, e), mixf(0.14f, 0.55f, e));
             }
-            if (y == 1 && g_objat[z][x]) {                                       /* objects: sphere tracing of the distance function inside the cell */
+            /* objects: sphere tracing of the distance function inside the cell (a lift also reaches the row above) */
+            if ((y == 1 || (y == 2 && g_objat[z][x] && g_obj[g_objat[z][x] - 1].kind == O_LIFT)) && g_objat[z][x]) {
                 const Obj *o = &g_obj[g_objat[z][x] - 1];
                 float cx = (float)x + 0.5f, cz = (float)z + 0.5f;
                 float t = tcell;
@@ -541,6 +560,12 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
                         ar = ag = ab = 0; er = 235 * fl; eg = 175 * fl; eb = 255 * fl;
                         break;
                     }
+                    case M_LIFT: {                                               /* glass tube; its core glows with the light passing through */
+                        ar = 0.30f; ag = 0.48f; ab = 0.58f; spec = 0.7f;
+                        float lr2 = fminf(o->got[0], 1), lg2 = fminf(o->got[1], 1), lb2 = fminf(o->got[2], 1);
+                        er = 18 + 210 * lr2; eg = 28 + 210 * lg2; eb = 34 + 210 * lb2;
+                        break;
+                    }
                     case M_CRATE: {                                              /* wood grain: faint stripes along the height */
                         float k = 0.88f + 0.12f * sinf(py * 55 + (float)(x * 3 + z));
                         ar = 0.62f * k; ag = 0.42f * k; ab = 0.24f * k;
@@ -591,9 +616,9 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
         const Seg *s = &s_seg[i];
         float lx = s->x1 - s->x0, lz = s->z1 - s->z0;                  /* n = ray x segment direction (segment y = 0) */
         float nx = dy * lz, ny = dz * lx - dx * lz, nz = -dy * lx;
-        float wn = (ox - s->x0) * nx + (oy - BY) * ny + (oz - s->z0) * nz;
+        float wn = (ox - s->x0) * nx + (s_seg_oy[i] - BY) * ny + (oz - s->z0) * nz;
         if (wn * wn > rmax2 * (nx * nx + ny * ny + nz * nz)) continue;
-        float tc, d = ray_seg_dist(ox, oy, oz, dx, dy, dz, tm, s, &tc);
+        float tc, d = ray_seg_dist(ox, s_seg_oy[i], oz, dx, dy, dz, tm, s, &tc);
         /* widen the beam core to at least a pixel and fade it as much (so far beams do not break up) */
         /* keep the halo narrow and faint: a wide one washes out objects near the beam */
         float fw = tc * F->pixl, sc = fmaxf(0.045f, 0.6f * fw), sh = fmaxf(0.10f, 1.3f * fw);
