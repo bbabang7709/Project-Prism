@@ -17,10 +17,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
-#include <fcntl.h>
-#include <sys/inotify.h>
-#include <sys/stat.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
 
@@ -35,6 +31,7 @@
 #include "platform/input.h"
 #include "platform/terminal.h"
 #include "renderer/renderer.h"
+#include "world/watch.h"
 #include "world/world.h"
 
 enum { UI_MENU, UI_PLAY, UI_EDIT };
@@ -45,8 +42,6 @@ static int s_look = 1;                  /* V: mouse look (while the mouse-lock h
 static const char *s_level_dir;         /* --levels */
 static int s_port = NET_PORT;           /* port used when hosting from the menu */
 static int s_frame;
-static uint64_t s_level_sig;            /* fingerprint of the level folder at the last load (hot reload) */
-static uint64_t levels_signature(const char *dir);
 
 /* ---------- level files ---------- */
 
@@ -83,7 +78,7 @@ static int load_levels(const char *dir)
 static void prepare_levels(int solo)
 {
     load_levels(s_level_dir);                             /* checked once at startup, so this does not fail */
-    s_level_sig = levels_signature(g_level_dir);          /* hot reload compares against this */
+    watch_loaded();                                       /* hot reload compares against this */
     if (solo) world_drop_coop();
 }
 
@@ -137,69 +132,16 @@ static void start_join(const char *addr)
     s_ui = UI_PLAY;
 }
 
-/* ---------- level hot reload (inotify + mtime fallback) ---------- */
+/* ---------- level hot reload ---------- */
 
-/*
- * Editing a .lvl file while playing rebuilds the room at once.
- * inotify reports writes made inside Linux; WSL's /mnt drives do not report
- * writes made by Windows programs, so a once-a-second fingerprint of the
- * files' names, sizes and modification times catches those too.
- */
-static int s_ifd = -1;                  /* inotify descriptor (-1: not watching) */
-static int64_t s_reload_at;             /* when to reload (ms), 0 = nothing pending */
-
-static uint64_t levels_signature(const char *dir)
-{
-    DIR *d = opendir(dir);
-    if (!d) return 0;
-    uint64_t sum = 0;
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        size_t l = strlen(e->d_name);
-        struct stat st;
-        if (l < 5 || strcmp(e->d_name + l - 4, ".lvl") || fstatat(dirfd(d), e->d_name, &st, 0) != 0) continue;
-        uint64_t h = 1469598103934665603ULL;                 /* FNV-1a of the name, mixed with size and mtime */
-        for (size_t i = 0; i < l; i++) h = (h ^ (unsigned char)e->d_name[i]) * 1099511628211ULL;
-        h ^= (uint64_t)st.st_size * 0x9E3779B97F4A7C15ULL;
-        h ^= ((uint64_t)st.st_mtim.tv_sec * 1000000000ULL + (uint64_t)st.st_mtim.tv_nsec) * 0xC2B2AE3D27D4EB4FULL;
-        sum += h;                                            /* order independent */
-    }
-    closedir(d);
-    return sum;
-}
-
-static void watch_levels(void)
-{
-    s_level_sig = levels_signature(g_level_dir);
-    if (s_ifd >= 0) return;
-    s_ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-    if (s_ifd >= 0 && inotify_add_watch(s_ifd, g_level_dir, IN_CLOSE_WRITE | IN_MOVED_TO | IN_MOVED_FROM | IN_DELETE | IN_CREATE) < 0) {
-        close(s_ifd);                                        /* no level folder (built-in room): nothing to watch */
-        s_ifd = -1;
-    }
-}
-
-/* drain inotify events; any change to a .lvl file schedules a reload shortly after (editors write in bursts) */
-static void on_level_events(int64_t now)
-{
-    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
-    ssize_t n;
-    while ((n = read(s_ifd, buf, sizeof buf)) > 0)
-        for (char *p = buf; p < buf + n; p += sizeof(struct inotify_event) + ((struct inotify_event *)p)->len) {
-            const struct inotify_event *ev = (const struct inotify_event *)p;
-            size_t l = ev->len ? strlen(ev->name) : 0;
-            if (l >= 5 && !strcmp(ev->name + l - 4, ".lvl")) s_reload_at = now + 150;
-        }
-}
-
-/* Reload the level files. On a parse error keep the old rooms and show the error.
+/* The level files changed on disk (world/watch.c): reload them. On a parse error keep the old rooms and show the error.
  * Only while playing solo or hosting; the editor and joiners pick changes up on their next start. */
 static void reload_levels(void)
 {
     static Level old[MAXLEVEL];
     char err[512], file[64];
     int old_n = g_nlevels, old_cur = g_cur_level;
-    s_level_sig = levels_signature(g_level_dir);
+    watch_loaded();
     if (s_ui != UI_PLAY || s_testing || net_mode() == NET_CLIENT) return;
     memcpy(old, g_levels, sizeof old);
     snprintf(file, sizeof file, "%s", g_levels[g_cur_level].file);
@@ -509,10 +451,8 @@ int main(int argc, char **argv)
         go_menu(NULL);                                    /* no options: the start menu */
     int64_t fps_t0 = now;
     int fps = 0, fps_n = 0;
-    watch_levels();                                       /* hot reload: inotify on the level folder */
-    int64_t sig_check = now;
     /* poll set: stdin, game timer, inotify (fd -1 is ignored by poll), then up to two sockets */
-    struct pollfd pf[5] = { { STDIN_FILENO, POLLIN, 0 }, { tfd, POLLIN, 0 }, { s_ifd, POLLIN, 0 } };
+    struct pollfd pf[5] = { { STDIN_FILENO, POLLIN, 0 }, { tfd, POLLIN, 0 }, { watch_start(), POLLIN, 0 } };
     while (!g_quit) {
         if (g_resize) { g_resize = 0; term_get_size(); }
         int nnet = net_pollfds(pf + 3, 2);
@@ -524,12 +464,8 @@ int main(int argc, char **argv)
         input_set_time(now);
         if (pf[0].revents & POLLIN) input_read();
         if (input_esc_expired()) on_press(VK_ESC);        /* the ESC key alone */
-        if (pf[2].revents & POLLIN) on_level_events(now);
-        if (now - sig_check >= 1000) {                    /* fallback for edits inotify cannot see */
-            sig_check = now;
-            if (!s_reload_at && levels_signature(g_level_dir) != s_level_sig) s_reload_at = now;
-        }
-        if (s_reload_at && now >= s_reload_at) { s_reload_at = 0; reload_levels(); }
+        if (pf[2].revents & POLLIN) watch_events(now);    /* level files changed (inotify) */
+        if (watch_due(now)) reload_levels();
         mouse_look_update();                              /* mouse-lock helper: view and pointer lock */
         net_handle(pf + 3, nnet);                         /* accept connections, handle received messages */
         if (net_lost()) {                                 /* lost the host: back to the menu showing why */
@@ -561,6 +497,6 @@ int main(int argc, char **argv)
     net_close();
     renderer_shutdown();
     close(tfd);
-    if (s_ifd >= 0) close(s_ifd);
+    watch_stop();
     return 0;
 }
