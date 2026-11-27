@@ -582,8 +582,17 @@ static uint32_t trace(const Frame *F, float dx, float dy, float dz, float *zdep,
 
     /* beams: brighter the closer they pass the screen ray (hidden parts end at thit) */
     float tm = thit < 1e8f ? thit : 200;
+    /* Cheap rejection before the exact distance: the distance between the two infinite lines is never larger
+     * than the distance between the segments, and the glow radius below is at most rmax (tc <= tm).
+     * A segment whose line is farther than rmax (plus a margin for rounding) would be skipped anyway,
+     * so the picture is unchanged; this roughly halves the frame time with several beams. */
+    float rmax = fmaxf(0.32f, 3 * fmaxf(0.10f, 1.3f * tm * F->pixl)) * 1.02f + 0.005f, rmax2 = rmax * rmax;
     for (int i = 0; i < s_nseg; i++) {
         const Seg *s = &s_seg[i];
+        float lx = s->x1 - s->x0, lz = s->z1 - s->z0;                  /* n = ray x segment direction (segment y = 0) */
+        float nx = dy * lz, ny = dz * lx - dx * lz, nz = -dy * lx;
+        float wn = (ox - s->x0) * nx + (oy - BY) * ny + (oz - s->z0) * nz;
+        if (wn * wn > rmax2 * (nx * nx + ny * ny + nz * nz)) continue;
         float tc, d = ray_seg_dist(ox, oy, oz, dx, dy, dz, tm, s, &tc);
         /* widen the beam core to at least a pixel and fade it as much (so far beams do not break up) */
         /* keep the halo narrow and faint: a wide one washes out objects near the beam */

@@ -290,7 +290,7 @@ static void mouse_look_update(void)
 int main(int argc, char **argv)
 {
     int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1, level_set = 0, host_port = 0, shot_w = PIX_W, shot_h = PIX_H;
-    int term_cols = 0, term_rows = 0, guide_ticks = -1;
+    int term_cols = 0, term_rows = 0, guide_ticks = -1, bench = 0;
     float fx = 0, fz = 0, fyaw = 0, fpitch = 0;
     const char *shot = NULL, *join = NULL;
     for (int i = 1; i < argc; i++) {
@@ -307,6 +307,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--halfblock")) hud_set_quad(0);
         else if (!strcmp(argv[i], "--full-res")) hud_set_autores(0);   /* no dynamic resolution (benchmarks) */
         else if (!strcmp(argv[i], "--guide") && i + 1 < argc) guide_ticks = atoi(argv[++i]);   /* dev: hint, then simulate n ticks */
+        else if (!strcmp(argv[i], "--bench") && i + 1 < argc) bench = atoi(argv[++i]);          /* with --shot: time n frames */
         else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* development: PNG preview of the terminal screen */
             shot = argv[++i];
             term_cols = atoi(argv[++i]); term_rows = atoi(argv[++i]);
@@ -398,6 +399,17 @@ int main(int argc, char **argv)
             int64_t t0 = now_us();
             renderer_draw(&view, W, H, 0);
             double ms = (double)(now_us() - t0) / 1000.0;
+            if (bench > 0) {                              /* --bench n: time n more frames of the same view */
+                double sum = 0, best = 1e9;
+                for (int k = 0; k < bench; k++) {
+                    int64_t b0 = now_us();
+                    renderer_draw(&view, W, H, 0);
+                    double m = (double)(now_us() - b0) / 1000.0;
+                    sum += m;
+                    if (m < best) best = m;
+                }
+                printf("bench: %d frames of %dx%d px, average %.2f ms, best %.2f ms, %d threads\n", bench, W, H, sum / bench, best, nthreads);
+            }
             if (p0->fp)
                 for (int k = -cr; k <= cr; k++) { g_pix[H / 2][W / 2 + k] = 0xE8E8E8; g_pix[H / 2 + k][W / 2] = 0xE8E8E8; }
             size_t sl = strlen(shot);
