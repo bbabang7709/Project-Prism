@@ -47,6 +47,10 @@ void renderer_shutdown(void);         /* stops the worker threads and waits for 
 /* draw one W x H frame. frame drives crystal flicker and the selection pulse */
 void renderer_draw(const View *v, int W, int H, int frame);
 
+/* draw object number obj alone (a small 3D icon) into g_pix (x0, y0, w x h), seen from direction yaw.
+ * Call after renderer_draw, on the same thread */
+void renderer_icon(int obj, int x0, int y0, int w, int h, float paspect, float yaw);
+
 /* save the W x H area of g_pix, scaled up scale times, as PPM (P6) */
 void renderer_write_ppm(const char *path, int W, int H, int scale);
 

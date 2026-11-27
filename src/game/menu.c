@@ -7,6 +7,7 @@
 #include "game/progress.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
+#include "game/ui.h"
 #include "renderer/renderer.h"
 #include "world/world.h"
 
@@ -101,42 +102,28 @@ void menu_text(int ch)
 
 /* ---------- drawing ---------- */
 
-/* centred text */
-static void center(int y, uint32_t fg, uint32_t bg, const char *s)
-{
-    term_text(g_cols / 2 - term_str_w(s) / 2, y, fg, bg, "%s", s);
-}
-
-/* paint a box into the cell buffer */
-static void box(int x0, int y0, int w, int h, uint32_t bg)
-{
-    for (int y = y0; y < y0 + h && y < g_rows; y++)
-        for (int x = x0; x < x0 + w && x < g_cols; x++)
-            if (x >= 0 && y >= 0) g_back[y][x] = (VCell){ 0xFFFFFF, bg, " ", 0 };
-}
-
+/* controls page: key caps and what they do */
 static void draw_help(int x0, int y0, int w)
 {
-    static const char *LINES[] = {
-        "W A S D        걷기 (Shift를 누르고 있으면 달리기)",
-        "Space          점프",
-        "방향키          시선 (내려다보기: ←→ 카메라, ↑↓ 기울기)",
-        "F / 클릭       물체 들기, 빈 바닥에 내려놓기",
-        "Q E / 휠       겨눈 거울을 22.5도씩 돌리기",
-        "Tab / + -      1인칭 ↔ 내려다보기 / 내려다보기 확대·축소",
-        "Z / R / I      되돌리기 / 처음 상태로 / 힌트 (안내자가 길 안내)",
-        "V              마우스 시선 켜기/끄기 (mouselock 도우미)",
-        "H / G / P      도움말 줄 / 화면 방식 (2×2 ↔ 반블록) / 성능 표시",
-        "ESC            메뉴로 (메뉴에서는 끝내기)",
-        "",
-        "모든 수정에 맞는 색의 빛을 보내면 문이 열립니다.",
-        "발판을 누르면 창살이 열리고, 몸은 빛을 가립니다.",
-        "감지기에 빛을 보내도 창살이 열리고, 상자는 빛을 막습니다.",
+    static const char *ROWS[][2] = {
+        { "W A S D", "걷기 (Shift를 누르고 있으면 달리기)" },
+        { "Space", "점프" },
+        { "방향키", "시선 (내려다보기: ←→ 카메라, ↑↓ 기울기)" },
+        { "F / 클릭", "물체 들기, 빈 바닥에 내려놓기" },
+        { "Q E / 휠", "겨눈 거울을 22.5도씩 돌리기" },
+        { "Tab  + -", "1인칭 ↔ 내려다보기 / 확대·축소" },
+        { "Z  R  I", "되돌리기 / 처음 상태로 / 힌트 (안내자가 길 안내)" },
+        { "V", "마우스 시선 (Windows mouselock 도우미)" },
+        { "H  G  P", "도움말 줄 / 화면 방식 / 성능 표시" },
+        { "ESC", "메뉴로 (메뉴에서는 끝내기)" },
     };
-    int n = (int)(sizeof LINES / sizeof LINES[0]);
-    box(x0, y0, w, n + 3, 0x1A1E2A);
-    term_text(x0 + 2, y0, 0xFFD27A, 0x1A1E2A, "조작법");
-    for (int i = 0; i < n; i++) term_text(x0 + 3, y0 + 2 + i, 0xD8DCE8, 0x1A1E2A, "%s", LINES[i]);
+    int n = (int)(sizeof ROWS / sizeof ROWS[0]);
+    ui_frame(x0, y0, w, n + 5, 0x4A5470, UI_PANEL, "조작법");
+    for (int i = 0; i < n; i++) {
+        term_text(x0 + 3, y0 + 2 + i, 0xFFFFFF, UI_KEY, " %-8s ", ROWS[i][0]);
+        term_text(x0 + 15, y0 + 2 + i, UI_TEXT, UI_PANEL, "%s", ROWS[i][1]);
+    }
+    term_text(x0 + 3, y0 + n + 3, UI_DIM, UI_PANEL, "모든 수정에 알맞은 색의 빛을 보내면 문이 열립니다.");
 }
 
 void menu_draw(int frame)
@@ -160,25 +147,41 @@ void menu_draw(int frame)
     v.cam_pitch = -0.9f;
     v.cam_dist = 18;
     renderer_draw(&v, W, H, frame);
-    hud_blit(120);                                       /* darker background */
+    hud_blit(110);                                       /* darker background */
 
-    int bw = 64 < g_cols - 4 ? 64 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 11;
+    int bw = 66 < g_cols - 4 ? 66 : g_cols - 4, bx = g_cols / 2 - bw / 2, top = g_rows / 2 - 11;
     if (top < 1) top = 1;
-    box(bx, top, bw, 5, 0x161822);
-    center(top + 1, 0xFFD27A, 0x161822, "P  R  I  S  M");
-    center(top + 3, 0xA8B0C4, 0x161822, "빛의 신전  ·  터미널 3D 광학 퍼즐");
 
-    int iy = top + 6;
+    /* title card: the logo in spectrum colours, as a prism splits white light */
+    ui_frame(bx, top, bw, 5, 0x4A5470, UI_BAR, NULL);
+    ui_logo(g_cols / 2 - 15, top + 1, UI_BAR, frame);
+    const char *sub = " 빛의 신전 · 터미널 3D 광학 퍼즐 ";
+    term_text(g_cols / 2 - term_str_w(sub) / 2, top + 4, 0xA8B0C4, UI_BAR, "%s", sub);
+    int solved = 0;
+    for (int i = 0; i < s_nsolo; i++) solved += s_best[s_solo[i]] >= 0;
+    if (s_nsolo) ui_chip(bx + bw - 15, top, solved == s_nsolo ? 0x101420 : UI_INFO, solved == s_nsolo ? UI_OK : UI_BAR, "푼 방 %d/%d", solved, s_nsolo);
+
+    int iy = top + 5;
     if (s_help) draw_help(bx, iy, bw);
     else {
-        box(bx, iy, bw, NITEM * 2 + 1, 0x1A1E2A);
+        static const char *LABEL[NITEM] = { "혼자 하기", "호스트로 시작", "참가하기", "방 만들기", "조작법", "끝내기" };
+        static const char *DESC[NITEM] = {
+            "혼자서 방을 차례로 풀어요. ←→로 시작 방을 고릅니다",
+            "2인 협동: 다른 터미널이나 컴퓨터가 참가할 때까지 기다려요",
+            "2인 협동: 호스트 주소를 입력하고 Enter",
+            "레벨 에디터: 방을 고치거나 새로 만들어요",
+            "모든 키와 규칙 보기",
+            "게임을 끝내요",
+        };
+        ui_frame(bx, iy, bw, NITEM * 2 + 2, 0x4A5470, UI_PANEL, NULL);
         for (int i = 0; i < NITEM; i++) {
             int y = iy + 1 + i * 2, on = i == s_sel;
-            uint32_t bg = on ? 0x2E3550 : 0x1A1E2A, fg = on ? 0xFFFFFF : 0xC8CCD8;
-            for (int x = bx + 1; x < bx + bw - 1; x++) g_back[y][x] = (VCell){ fg, bg, " ", 0 };
-            static const char *LABEL[NITEM] = { "혼자 하기", "호스트로 시작 (2인 협동)", "참가하기 (2인 협동)", "방 만들기 (레벨 에디터)", "조작법", "끝내기" };
-            term_text(bx + 3, y, on ? 0xFFD27A : 0x6A7088, bg, on ? "▶" : " ");
+            uint32_t bg = on ? UI_PANEL_HI : UI_PANEL, fg = on ? 0xFFFFFF : 0xC8CCD8;
+            ui_fill(bx + 1, y, bw - 2, 1, bg);
+            if (on) term_text(bx + 1, y, UI_GOLD, bg, "▌");
+            term_text(bx + 3, y, on ? UI_GOLD : 0x6A7088, bg, on ? "▶" : "·");
             term_text(bx + 6, y, fg, bg, "%s", LABEL[i]);
+            if (i == IT_HOST || i == IT_JOIN) term_text(bx + 6 + term_str_w(LABEL[i]) + 1, y, 0xB8A8E8, bg, "2인");
             char val[96] = "";
             if (i == IT_SOLO && s_nsolo) {
                 int lv = s_solo[s_room_solo];
@@ -193,16 +196,19 @@ void menu_draw(int frame)
             } else if (i == IT_JOIN) {
                 snprintf(val, sizeof val, "[%-21.21s%s]", s_addr, s_editing && (frame / 8) % 2 ? "_" : " ");
             }
-            if (val[0]) term_text(bx + bw - 2 - term_str_w(val), y, on ? 0x9FD4FF : 0x8088A0, bg, "%s", val);
+            if (val[0]) term_text(bx + bw - 2 - term_str_w(val), y, on ? UI_INFO : 0x8088A0, bg, "%s", val);
         }
+        term_text(bx + 2, iy + NITEM * 2 + 1, UI_DIM, UI_PANEL, " %s ", DESC[s_sel]);   /* what the selected item does */
     }
-    term_bar(g_rows - 1, 0x161822);
-    term_text(1, g_rows - 1, 0x9AA0B0, 0x161822, "%s",
-              s_editing ? "글자 입력   Backspace 지우기   Enter 접속   ESC 취소"
-              : s_help ? "Enter / ESC 닫기"
-                       : "↑↓ 고르기   ←→ 시작 방 바꾸기   Enter 시작   ESC 끝내기");
-    if (s_msg[0]) center(g_rows - 3, 0xFFE6A0, 0x22252F, s_msg);
+    term_bar(g_rows - 1, UI_BAR);
+    static const char *KE[] = { "글자", "입력", "Backspace", "지우기", "Enter", "접속", "ESC", "취소" };
+    static const char *KH[] = { "Enter", "닫기", "ESC", "닫기" };
+    static const char *KM[] = { "↑↓", "고르기", "←→", "시작 방 바꾸기", "Enter", "시작", "ESC", "끝내기" };
+    if (s_editing) ui_keys(1, g_rows - 1, UI_BAR, KE, 4);
+    else if (s_help) ui_keys(1, g_rows - 1, UI_BAR, KH, 2);
+    else ui_keys(1, g_rows - 1, UI_BAR, KM, 4);
+    if (s_msg[0]) ui_center(g_rows - 2, 0xFFE6A0, 0x22252F, s_msg);
     else if (g_cols < 160)                                /* screen resolution comes from the terminal's cell count */
-        center(g_rows - 3, 0x9FD4FF, 0x161822, " 더 선명하게 보려면 창을 최대화하거나 Ctrl + - 로 글자를 줄이세요 ");
+        ui_center(g_rows - 2, UI_INFO, UI_BAR, " 더 선명하게 보려면 창을 최대화하거나 Ctrl + - 로 글자를 줄이세요 ");
     term_present();
 }

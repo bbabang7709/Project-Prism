@@ -7,6 +7,7 @@
 #include "platform/bridge.h"
 #include "platform/input.h"
 #include "platform/terminal.h"
+#include "game/ui.h"
 #include "renderer/renderer.h"
 #include "world/world.h"
 
@@ -203,50 +204,102 @@ void hud_draw(int frame, int fps, const char *net)
         for (int k = -kx; k <= kx; k++) g_pix[cy][cx + k] = k ? 0xE8E8E8 : 0xFFFFFF;
         for (int k = -2; k <= 2; k++) if (k) g_pix[cy + k][cx] = 0xE8E8E8;
     }
+    /* carried-object window (bottom right): the held object rendered in 3D, seen from where you look */
+    int iy = g_rows - (g_help ? 3 : 2), ww = 22, wh = 9, wx = g_cols - ww - 1, wy = iy - wh;
+    int show_carry = me->carry >= 0 && g_cols >= 90 && wy >= 5;
+    if (show_carry) {
+        int cw = g_quad ? 2 : 1;
+        renderer_icon(me->carry, (wx + 1) * cw, (wy + 1) * 2, (ww - 2) * cw, (wh - 2) * 2, view.paspect, me->fp ? me->yaw : cam_yaw);
+    }
     hud_blit(256);
-    int total, lit = optics_count_lit(&total);
-    term_bar(0, 0x161822);
-    int x = term_text(1, 0, 0xFFD27A, 0x161822, " PRISM ") + 2;
-    if (g_nlevels > 1) x += term_text(x, 0, 0xC8CCD8, 0x161822, "방 %d/%d ", g_cur_level + 1, g_nlevels);
-    x += term_text(x, 0, 0xC8CCD8, 0x161822, "%s%s  |  수정 %d/%d", g_levels[g_cur_level].name, g_levels[g_cur_level].coop ? " (2인 협동)" : "", lit, total);
-    x += term_text(x, 0, g_solved ? 0x7CE07C : 0xC8CCD8, 0x161822, g_solved ? "  |  문 열림" : "  |  문 닫힘");
-    x += term_text(x, 0, 0xC8CCD8, 0x161822, "  |  %s", me->fp ? "1인칭" : "내려다보기");
-    if (net) term_text(1, 1, 0x9FD4FF, 0x101010, " %s ", net);    /* network status (left of the second row) */
-    term_text(g_cols - 34, 0, 0x7A8090, 0x161822, "키 %s  빛줄기 %d  %2d fps", input_win32() ? "누름/뗌" : "탭", g_nseg, fps);
 
-    /* bottom: what you hold, what you aim at */
-    int iy = g_rows - (g_help ? 3 : 2);
-    char info[160];
-    if (me->carry >= 0)
-        snprintf(info, sizeof info, " 손에 든 것: %s  —  %s ", KIND_NAME[g_obj[me->carry].kind], me->tx >= 0 ? "F: 여기에 내려놓기" : "빈 바닥을 겨누세요");
-    else if (me->tobj >= 0)
-        snprintf(info, sizeof info, " %s  —  %s ", KIND_NAME[g_obj[me->tobj].kind],
-                 !g_obj[me->tobj].movable ? "고정됨" : (g_obj[me->tobj].kind == O_MIRROR || g_obj[me->tobj].kind == O_SPLIT) ? "F: 들기   Q/E: 돌리기" : "F: 들기");
-    else
-        info[0] = 0;
-    if (info[0]) term_text(g_cols / 2 - term_str_w(info) / 2, iy, 0xFFE6A0, 0x22252F, "%s", info);
+    /* top bar: room, crystals (one diamond each, in its colour, bright when lit), door, view */
+    int total, lit = optics_count_lit(&total);
+    term_bar(0, UI_BAR);
+    int x = ui_chip(0, 0, 0x101420, UI_GOLD, "◆ PRISM") + 1;
+    if (g_nlevels > 1) x += term_text(x, 0, UI_INFO, UI_BAR, " 방 %d/%d ", g_cur_level + 1, g_nlevels);
+    x += term_text(x, 0, UI_TEXT, UI_BAR, "%s ", g_levels[g_cur_level].name);
+    if (g_levels[g_cur_level].coop) x += ui_chip(x, 0, 0xE8DCFF, 0x3A2E58, "2인 협동") + 1;
+    x += term_text(x, 0, UI_DIM, UI_BAR, "  수정 ");
+    for (int i = 0; i < g_nobj; i++) {
+        const Obj *o = &g_obj[i];
+        if (o->kind != O_CRYSTAL) continue;
+        float k = o->lit ? 255 : 90, a0 = o->lit ? 0 : 40;
+        uint32_t c = (uint32_t)(a0 + o->col[0] * k) << 16 | (uint32_t)(a0 + o->col[1] * k) << 8 | (uint32_t)(a0 + o->col[2] * k);
+        x += term_text(x, 0, c, UI_BAR, "◆");
+    }
+    x += term_text(x, 0, UI_DIM, UI_BAR, " %d/%d  ", lit, total);
+    x += g_solved ? ui_chip(x, 0, 0x101420, UI_OK, "문 열림") : ui_chip(x, 0, UI_DIM, 0x252A38, "문 닫힘");
+    x += term_text(x, 0, UI_DIM, UI_BAR, "  %s", me->fp ? "1인칭" : "내려다보기");
+    char right[64];
+    snprintf(right, sizeof right, "키 %s · 빛줄기 %d · %2d fps ", input_win32() ? "누름/뗌" : "탭", g_nseg, fps);
+    if (x + term_str_w(right) + 2 < g_cols) term_text(g_cols - term_str_w(right), 0, 0x6A7088, UI_BAR, "%s", right);
+    if (net) ui_chip(0, 1, UI_INFO, 0x1E2638, "%s", net);       /* network status (left of the second row) */
+
+    /* above the help line: what you hold or aim at, with the keys that act on it */
+    const Obj *ao = me->carry >= 0 ? &g_obj[me->carry] : me->tobj >= 0 ? &g_obj[me->tobj] : NULL;
+    if (ao) {
+        static const char *K1[] = { "F", "여기에 내려놓기", "Q E", "돌리기" }, *K2[] = { "F", "들기", "Q E", "돌리기" };
+        int turn = ao->kind == O_MIRROR || ao->kind == O_SPLIT, nk;
+        const char *const *keys;
+        const char *note = NULL;
+        if (me->carry >= 0) { keys = K1; nk = me->tx >= 0 ? (turn ? 2 : 1) : 0; if (me->tx < 0) note = "빈 바닥을 겨누세요"; }
+        else if (!ao->movable) { keys = K2; nk = 0; note = "고정됨"; }
+        else { keys = K2; nk = turn ? 2 : 1; }
+        char name[64];
+        snprintf(name, sizeof name, "%s%s", me->carry >= 0 ? "손에 든 것: " : "", KIND_NAME[ao->kind]);
+        int w = term_str_w(name) + 3 + ui_keys_w(keys, nk) + (note ? term_str_w(note) + 1 : 0);
+        int ix = g_cols / 2 - w / 2;
+        ui_fill(ix - 1, iy, w + 1, 1, 0x22252F);
+        ix += ui_chip(ix, iy, 0x101420, 0xFFE6A0, "%s", name) + 1;
+        if (nk) ix += ui_keys(ix, iy, 0x22252F, keys, nk);
+        if (note) term_text(ix, iy, UI_DIM, 0x22252F, "%s", note);
+    }
+    if (show_carry) {                                     /* frame around the 3D icon */
+        const Obj *co = &g_obj[me->carry];
+        ui_border(wx, wy, ww, wh, 0x5A6480, UI_PANEL, "손에 든 것");
+        if (co->kind == O_MIRROR || co->kind == O_SPLIT)
+            term_text(wx + 2, wy + wh - 1, UI_TEXT, UI_PANEL, " %s %.1f° ", KIND_NAME[co->kind], co->rot * 22.5);
+        else
+            term_text(wx + 2, wy + wh - 1, UI_TEXT, UI_PANEL, " %s ", KIND_NAME[co->kind]);
+    }
+
+    /* help line: key caps for the actions (movement keys are on the menu's controls page) */
     if (g_help) {
-        term_bar(g_rows - 1, 0x161822);
-        term_text(1, g_rows - 1, 0x9AA0B0, 0x161822,
-             /* actions only: movement keys are listed on the menu's controls page; V only with the mouse helper */
-             me->fp ? (bridge_connected() ? "F 들기/놓기   Q/E·휠 돌리기   Tab 내려다보기   V 마우스   Z 되돌리기   I 힌트   R 처음부터   H 도움말   G 화면   ESC 메뉴"
-                                          : "F 들기/놓기   Q/E·휠 돌리기   Tab 내려다보기   Z 되돌리기   I 힌트   R 처음부터   H 도움말   G 화면   ESC 메뉴")
-                    : "←→ 카메라   ↑↓ 기울기   +/- 확대   F 들기/놓기   Q/E 돌리기   Tab 1인칭   Z 되돌리기   I 힌트   R 처음부터   ESC 메뉴");
+        term_bar(g_rows - 1, UI_BAR);
+        static const char *FP[] = { "F", "들기/놓기", "Q E", "돌리기", "Tab", "내려다보기", "Z", "되돌리기", "I", "힌트", "R", "처음부터", "H", "도움말", "ESC", "메뉴" };
+        static const char *FPV[] = { "F", "들기/놓기", "Q E", "돌리기", "Tab", "내려다보기", "V", "마우스", "Z", "되돌리기", "I", "힌트", "R", "처음부터", "ESC", "메뉴" };
+        static const char *TOP[] = { "←→", "카메라", "↑↓", "기울기", "+ -", "확대", "F", "들기/놓기", "Q E", "돌리기", "Tab", "1인칭", "Z", "되돌리기", "I", "힌트", "ESC", "메뉴" };
+        if (!me->fp) ui_keys(1, g_rows - 1, UI_BAR, TOP, 9);
+        else if (bridge_connected()) ui_keys(1, g_rows - 1, UI_BAR, FPV, 8);   /* V only with the mouse helper */
+        else ui_keys(1, g_rows - 1, UI_BAR, FP, 8);
     }
     if (g_perf) draw_perf(fps);
-    if (me->msg_t > 0) term_text(g_cols / 2 - term_str_w(me->msg) / 2 - 1, 2, g_solved ? 0x101010 : 0xFFFFFF, g_solved ? 0x7CE07C : 0x2A2F3C, " %s ", me->msg);
-    if (g_cleared) {                                      /* end screen: results and what to do next */
-        int bw = 46, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - 4;
-        for (int y = by; y < by + 7; y++)
-            for (int x = bx; x < bx + bw; x++) g_back[y][x] = (VCell){ 0xFFFFFF, 0x1C2A22, " ", 0 };
-        char line[96];
-        int sec = g_ticks / 30;
+
+    /* message card at the top: green when the room is solved, gold for hints */
+    if (me->msg_t > 0) {
+        int mw = term_str_w(me->msg) + 6, mx = g_cols / 2 - mw / 2;
+        uint32_t accent = g_solved ? UI_OK : me->hint_t > 0 ? UI_GOLD : UI_INFO;
+        ui_frame(mx, 2, mw, 3, accent, UI_PANEL, NULL);
+        term_text(mx + 1, 3, accent, UI_PANEL, "▌");
+        term_text(mx + 3, 3, 0xFFFFFF, UI_PANEL, "%s", me->msg);
+    }
+
+    /* end screen: a results card */
+    if (g_cleared) {
+        int bw = 48, bh = 11, bx = g_cols / 2 - bw / 2, by = g_rows / 2 - bh / 2;
+        ui_frame(bx, by, bw, bh, UI_OK, 0x16221C, "끝");
         const char *l1 = "모든 방을 풀었어요!";
-        term_text(g_cols / 2 - term_str_w(l1) / 2, by + 1, 0x7CE07C, 0x1C2A22, "%s", l1);
-        snprintf(line, sizeof line, "걸린 시간 %d:%02d   ·   조작 %d번   ·   방 %d개", sec / 60, sec % 60, g_total_moves, g_nlevels);
-        term_text(g_cols / 2 - term_str_w(line) / 2, by + 3, 0xE8ECF4, 0x1C2A22, "%s", line);
-        const char *l3 = "Enter 또는 ESC: 메뉴로";
-        term_text(g_cols / 2 - term_str_w(l3) / 2, by + 5, 0x9AA0B0, 0x1C2A22, "%s", l3);
+        term_text(g_cols / 2 - term_str_w(l1) / 2, by + 2, UI_OK, 0x16221C, "%s", l1);
+        int sec = g_ticks / 30;
+        term_text(bx + 10, by + 4, UI_DIM, 0x16221C, "걸린 시간");
+        term_text(bx + 26, by + 4, 0xFFFFFF, 0x16221C, "%d분 %02d초", sec / 60, sec % 60);
+        term_text(bx + 10, by + 5, UI_DIM, 0x16221C, "조작 횟수");
+        term_text(bx + 26, by + 5, 0xFFFFFF, 0x16221C, "%d번", g_total_moves);
+        term_text(bx + 10, by + 6, UI_DIM, 0x16221C, "푼 방");
+        term_text(bx + 26, by + 6, 0xFFFFFF, 0x16221C, "%d개", g_nlevels);
+        static const char *K[] = { "Enter", "메뉴로" };
+        ui_keys(g_cols / 2 - ui_keys_w(K, 1) / 2, by + 8, 0x16221C, K, 1);
     }
     term_present();
 }

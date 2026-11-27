@@ -290,7 +290,7 @@ static void mouse_look_update(void)
 int main(int argc, char **argv)
 {
     int check = 0, do_solve = 0, sel = -1, fp_shot = 0, level = 1, level_set = 0, host_port = 0, shot_w = PIX_W, shot_h = PIX_H;
-    int term_cols = 0, term_rows = 0, guide_ticks = -1, bench = 0;
+    int term_cols = 0, term_rows = 0, guide_ticks = -1, bench = 0, icon_obj = -1;
     float fx = 0, fz = 0, fyaw = 0, fpitch = 0;
     const char *shot = NULL, *join = NULL;
     for (int i = 1; i < argc; i++) {
@@ -308,6 +308,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--full-res")) hud_set_autores(0);   /* no dynamic resolution (benchmarks) */
         else if (!strcmp(argv[i], "--guide") && i + 1 < argc) guide_ticks = atoi(argv[++i]);   /* dev: hint, then simulate n ticks */
         else if (!strcmp(argv[i], "--bench") && i + 1 < argc) bench = atoi(argv[++i]);          /* with --shot: time n frames */
+        else if (!strcmp(argv[i], "--icon") && i + 1 < argc) icon_obj = atoi(argv[++i]);        /* with --shot: one object's 3D icon */
         else if (!strcmp(argv[i], "--term-shot") && i + 3 < argc) {   /* development: PNG preview of the terminal screen */
             shot = argv[++i];
             term_cols = atoi(argv[++i]); term_rows = atoi(argv[++i]);
@@ -376,7 +377,12 @@ int main(int argc, char **argv)
             if (check) printf("hint: %s\n", p0->msg);
         }
         if (sel >= 0 && sel < g_nobj) p0->tobj = sel;
-        if (shot && term_cols) {                          /* terminal preview: draw the cells' block characters as they would appear */
+        if (shot && icon_obj >= 0) {                      /* the carried-object window's 3D icon alone (160 x 140) */
+            for (int i = 0; i < 160 * 140; i++) g_pix[i / 160][i % 160] = 0;
+            renderer_icon(icon_obj, 0, 0, 160, 140, 1, p0->fp ? p0->yaw : cam_yaw);
+            renderer_write_png(shot, 160, 140, 1);
+            printf("wrote %s (icon of object %d)\n", shot, icon_obj);
+        } else if (shot && term_cols) {                   /* terminal preview: draw the cells' block characters as they would appear */
             g_cols = term_cols;
             g_rows = term_rows;
             int W, H;

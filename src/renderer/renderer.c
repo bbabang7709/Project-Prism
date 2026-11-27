@@ -165,6 +165,12 @@ static void setup_frame(const View *v, int W, int H, int frame)
     raycast_prepare(v->seg, v->nseg, v->bodies, v->nbody, F->oy);
 }
 
+void renderer_icon(int obj, int x0, int y0, int w, int h, float paspect, float yaw)
+{
+    if (x0 < 0 || y0 < 0 || x0 + w > PIX_W || y0 + h > PIX_H) return;
+    raycast_icon(obj, x0, y0, w, h, paspect, yaw);
+}
+
 void renderer_draw(const View *v, int W, int H, int frame)
 {
     int64_t t0 = now_us();

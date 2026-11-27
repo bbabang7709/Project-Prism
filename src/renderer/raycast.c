@@ -692,3 +692,73 @@ void raycast_aa_rows(int first, int step)
         if (any) memcpy(g_pix[j], row, sizeof row[0] * (size_t)F->W);   /* leave g_id and g_depth alone: other threads read them */
     }
 }
+
+/* ---------- object icon (the carried-object window) ---------- */
+
+/* flat material colours for the icon: base colour and self-glow (0..255) */
+static void icon_material(const Obj *o, int mat, float ny, float *r, float *g, float *b, float *e)
+{
+    *e = 0;
+    switch (mat) {
+    case M_BASE: *r = 0.58f; *g = 0.38f; *b = 0.22f; break;
+    case M_FRAME: *r = 0.80f; *g = 0.58f; *b = 0.30f; break;
+    case M_SILVER: *r = 0.88f; *g = 0.93f; *b = 1.00f; *e = 30; break;
+    case M_GLASSY: *r = 0.40f; *g = 0.88f; *b = 1.00f; *e = 25; break;
+    case M_PRISM: *r = 0.85f + 0.15f * ny; *g = 0.80f; *b = 0.95f - 0.15f * ny; *e = 35; break;
+    case M_FILTER: *r = o->col[0] * 0.8f; *g = o->col[1] * 0.8f; *b = o->col[2] * 0.9f; *e = 60; break;
+    case M_CRATE: *r = 0.62f; *g = 0.42f; *b = 0.24f; break;
+    case M_LIFT: *r = 0.30f; *g = 0.48f; *b = 0.58f; *e = 40; break;
+    case M_GEM: *r = o->col[0] * 0.6f + 0.1f; *g = o->col[1] * 0.6f + 0.1f; *b = o->col[2] * 0.6f + 0.1f; *e = 60; break;
+    default: *r = 0.35f; *g = 0.36f; *b = 0.42f; break;
+    }
+}
+
+/*
+ * Draw one object alone into g_pix (x0, y0, w x h), seen from the direction yaw (the player's view, so a
+ * mirror shows the angle it has in the room). Sphere tracing of the same shapes the room uses.
+ * Called on the main thread after renderer_draw, while the workers wait.
+ */
+void raycast_icon(int obj, int x0, int y0, int w, int h, float paspect, float yaw)
+{
+    if (obj < 0 || obj >= g_nobj || w < 4 || h < 4) return;
+    const Obj *o = &g_obj[obj];
+    float tall = o->kind == O_LIFT ? 1.75f : 1.0f;              /* lifts reach the high beam */
+    float pitch = -0.42f, cyw = cosf(yaw), syw = sinf(yaw), cp = cosf(pitch), sp = sinf(pitch);
+    float fx = syw * cp, fy = sp, fz = cyw * cp, rx = cyw, rz = -syw, ux = -syw * sp, uy = cp, uz = -cyw * sp;
+    float dist = 2.1f * tall, ox = -fx * dist, oy = 0.5f * tall - fy * dist, oz = -fz * dist;
+    float tanh = 0.42f, aspect = (float)h / (float)w * (paspect > 0 ? paspect : 1);
+    float lx = 0.38f, ly = 0.80f, lz = 0.46f;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            float sx = (2 * ((float)i + 0.5f) / (float)w - 1) * tanh, sy = (1 - 2 * ((float)j + 0.5f) / (float)h) * tanh * aspect;
+            float dx = fx + rx * sx + ux * sy, dy = fy + uy * sy, dz = fz + rz * sx + uz * sy;
+            float il = 1 / sqrtf(dx * dx + dy * dy + dz * dz);
+            dx *= il; dy *= il; dz *= il;
+            float bgk = (float)j / (float)h;                         /* background: the panel colour, a little lighter at the bottom */
+            uint32_t col = pack(26 + 10 * bgk, 30 + 10 * bgk, 42 + 14 * bgk);
+            float t = 0.3f;
+            int mat = 0, hit = 0;
+            for (int k = 0; k < 80 && t < dist * 2.5f; k++) {
+                float d = obj_sdf(o, ox + dx * t, oy + dy * t, oz + dz * t, &mat);
+                if (d < 0.002f) { hit = 1; break; }
+                t += fmaxf(d, 0.002f);
+            }
+            if (hit) {
+                float px = ox + dx * t, py = oy + dy * t, pz = oz + dz * t, e = 0.01f;
+                int m2;
+                float nx = obj_sdf(o, px + e, py, pz, &m2) - obj_sdf(o, px - e, py, pz, &m2);
+                float ny = obj_sdf(o, px, py + e, pz, &m2) - obj_sdf(o, px, py - e, pz, &m2);
+                float nz = obj_sdf(o, px, py, pz + e, &m2) - obj_sdf(o, px, py, pz - e, &m2);
+                float nl = sqrtf(nx * nx + ny * ny + nz * nz) + 1e-9f;
+                nx /= nl; ny /= nl; nz /= nl;
+                float ar, ag, ab, em;
+                icon_material(o, mat, ny, &ar, &ag, &ab, &em);
+                float diff = fmaxf(0, nx * lx + ny * ly + nz * lz), lit = 0.35f + 0.75f * diff;
+                float hx = lx - dx, hy = ly - dy, hz = lz - dz, hl = sqrtf(hx * hx + hy * hy + hz * hz);
+                float spec = powf(fmaxf(0, (nx * hx + ny * hy + nz * hz) / hl), 20) * 120;
+                float rim = powf(1 - fabsf(nx * dx + ny * dy + nz * dz), 3) * 40;   /* soft edge light so it stands out */
+                col = pack(ar * lit * 255 + em + spec + rim, ag * lit * 255 + em + spec + rim, ab * lit * 255 + em + spec + rim);
+            }
+            g_pix[y0 + j][x0 + i] = col;
+        }
+}

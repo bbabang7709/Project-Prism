@@ -48,4 +48,7 @@ void raycast_rows(int first, int step);
  * and average them (anti-aliasing). Call after raycast_rows finished on every row. Changes g_pix only */
 void raycast_aa_rows(int first, int step);
 
+/* one object alone, seen from direction yaw, into g_pix (x0, y0, w x h); main thread only */
+void raycast_icon(int obj, int x0, int y0, int w, int h, float paspect, float yaw);
+
 #endif
